@@ -2,7 +2,9 @@ use super::color::Color;
 use super::grid::ROWS;
 
 /// Fill for unset tiles.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[serde(rename_all = "lowercase")]
 pub enum Background {
     Rainbow,
     Red,
@@ -40,3 +42,17 @@ const RAINBOW: [Color; ROWS] = [
     Color::Blue,
     Color::Purple,
 ];
+
+impl Background {
+    pub const ALL: [Background; 9] = [
+        Background::Rainbow,
+        Background::Red,
+        Background::Orange,
+        Background::Yellow,
+        Background::Green,
+        Background::Blue,
+        Background::Purple,
+        Background::White,
+        Background::Black,
+    ];
+}

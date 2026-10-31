@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 
-use super::grid::Grid;
+use vestaboard::Grid;
 
 /// Vestaboard.
 pub enum Board {

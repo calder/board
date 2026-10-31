@@ -1,0 +1,14 @@
+[Unit]
+Description=Vestaboard web page and API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=calder
+WorkingDirectory=/home/calder/board
+ExecStart=/home/calder/board/board serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

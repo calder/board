@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use board::vestaboard::{Background, Board, Grid};
+use board::{Board, serve};
+use vestaboard::Message;
 
 /// Vestaboard control.
 #[derive(Parser)]
@@ -15,17 +16,17 @@ struct App {
 #[derive(Subcommand)]
 enum Command {
     /// Show text and exit.
-    Show {
-        /// Text to show.
-        text: String,
+    Show(Message),
 
-        /// Leave a blank margin around the text.
-        #[arg(long)]
-        pad: bool,
+    /// Run the HTTP API for phones and automations.
+    Serve {
+        /// Address to listen on.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
 
-        /// Fill around the text.
-        #[arg(long)]
-        background: Option<Background>,
+        /// Port to listen on.
+        #[arg(long, default_value_t = 8001)]
+        port: u16,
     },
 }
 
@@ -37,20 +38,7 @@ async fn main() -> Result<()> {
     let board = Board::from_env()?;
 
     match app.command {
-        Command::Show {
-            text,
-            pad,
-            background,
-        } => {
-            let mut grid = Grid::from_text(&text)?;
-            if pad {
-                grid.pad();
-            }
-            if let Some(background) = background {
-                grid.fill(background);
-            }
-
-            board.show_grid(&grid).await
-        }
+        Command::Show(message) => board.show_grid(&message.to_grid()?).await,
+        Command::Serve { host, port } => serve(board, &host, port).await,
     }
 }

@@ -1,3 +1,6 @@
+[workspace]
+members = ["vestaboard", "web"]
+
 [package]
 name = "board"
 version = "0.1.0"
@@ -5,8 +8,11 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
 reqwest = { version = "0.13.5", features = ["json"] }
+rust-embed = { version = "8.13.0", features = ["mime-guess"] }
 tokio = { version = "1.54.1", features = ["full"] }
+vestaboard = { path = "vestaboard" }
 yansi = { version = "1.0.1", features = ["detect-tty", "detect-env"] }

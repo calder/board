@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use anyhow::{Result, anyhow};
+#[cfg(feature = "terminal")]
 use yansi::Paint;
 
 use super::color::Color;
@@ -19,7 +20,11 @@ impl Char {
 
     /// Convert a line of text to board characters.
     pub fn from_text(text: &str) -> Result<Vec<Char>> {
-        text.chars().map(Char::try_from).collect()
+        // Keyboards often follow ⬜ and ⬛ with an invisible emoji variation selector.
+        text.chars()
+            .filter(|&c| c != '\u{fe0f}')
+            .map(Char::try_from)
+            .collect()
     }
 
     /// Code sent to the board.
@@ -56,6 +61,9 @@ impl TryFrom<char> for Char {
             u @ 'A'..='Z' => u as u8 - b'A' + 1,
             d @ '1'..='9' => d as u8 - b'1' + 27,
             '0' => 36,
+            p if let Some(color) = Color::ALL.into_iter().find(|color| color.square() == p) => {
+                color as u8
+            }
             p => PUNCTUATION
                 .iter()
                 .find(|(q, _)| *q == p)
@@ -76,7 +84,7 @@ impl From<Color> for Char {
 impl Display for Char {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         if let Some(color) = Color::from_code(self.0) {
-            return write!(f, "{}", "█".fg(color.into()));
+            return write!(f, "{}", block(color));
         }
 
         let c = match self.code() {
@@ -93,6 +101,17 @@ impl Display for Char {
 
         write!(f, "{c}")
     }
+}
+
+/// Draw a color tile in the terminal's palette.
+#[cfg(feature = "terminal")]
+fn block(color: Color) -> yansi::Painted<&'static str> {
+    "█".fg(color.into())
+}
+
+#[cfg(not(feature = "terminal"))]
+fn block(_color: Color) -> &'static str {
+    "█"
 }
 
 const PUNCTUATION: [(char, u8); 20] = [

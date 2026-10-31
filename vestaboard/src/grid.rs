@@ -110,30 +110,18 @@ impl Display for Grid {
     }
 }
 
-/// Wrap text at word boundaries.
+/// Wrap lines longer than `cols` at their last fitting space.
 pub fn wrap(paragraphs: &[Vec<Char>], cols: usize, max_lines: usize) -> Option<Vec<Vec<Char>>> {
+    // Spaces are kept as typed so people can align text by hand.
     let mut lines = Vec::new();
     for paragraph in paragraphs {
-        let mut line = Vec::new();
-        for word in paragraph
-            .split(|c| *c == Char::BLANK)
-            .filter(|w| !w.is_empty())
-        {
-            if word.len() > cols {
-                return None;
-            }
-            if line.is_empty() {
-                line.extend_from_slice(word);
-            } else if line.len() + 1 + word.len() <= cols {
-                line.push(Char::BLANK);
-                line.extend_from_slice(word);
-            } else {
-                lines.push(std::mem::replace(&mut line, word.to_vec()));
-            }
+        let mut rest = paragraph.as_slice();
+        while rest.len() > cols {
+            let split = rest[..=cols].iter().rposition(|c| *c == Char::BLANK)?;
+            lines.push(rest[..split].to_vec());
+            rest = &rest[split + 1..];
         }
-        if !line.is_empty() {
-            lines.push(line);
-        }
+        lines.push(rest.to_vec());
     }
 
     (lines.len() <= max_lines).then_some(lines)

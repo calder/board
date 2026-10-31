@@ -1,0 +1,15 @@
+[package]
+name = "vestaboard"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["cli", "terminal"]
+cli = ["dep:clap"]
+terminal = ["dep:yansi"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+serde = { version = "1.0.229", features = ["derive"] }
+yansi = { version = "1.0.1", optional = true }

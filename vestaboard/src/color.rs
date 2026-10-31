@@ -16,20 +16,25 @@ pub enum Color {
 
 impl Color {
     pub fn from_code(code: u8) -> Option<Color> {
-        Some(match code {
-            63 => Color::Red,
-            64 => Color::Orange,
-            65 => Color::Yellow,
-            66 => Color::Green,
-            67 => Color::Blue,
-            68 => Color::Purple,
-            69 => Color::White,
-            70 => Color::Black,
-            _ => return None,
-        })
+        Color::ALL.into_iter().find(|color| *color as u8 == code)
+    }
+
+    /// Emoji square typed for this color.
+    pub fn square(self) -> char {
+        match self {
+            Color::Red => '🟥',
+            Color::Orange => '🟧',
+            Color::Yellow => '🟨',
+            Color::Green => '🟩',
+            Color::Blue => '🟦',
+            Color::Purple => '🟪',
+            Color::White => '⬜',
+            Color::Black => '⬛',
+        }
     }
 }
 
+#[cfg(feature = "terminal")]
 impl From<Color> for yansi::Color {
     fn from(color: Color) -> yansi::Color {
         match color {
@@ -43,4 +48,17 @@ impl From<Color> for yansi::Color {
             Color::Black => yansi::Color::Black,
         }
     }
+}
+
+impl Color {
+    pub const ALL: [Color; 8] = [
+        Color::Red,
+        Color::Orange,
+        Color::Yellow,
+        Color::Green,
+        Color::Blue,
+        Color::Purple,
+        Color::White,
+        Color::Black,
+    ];
 }

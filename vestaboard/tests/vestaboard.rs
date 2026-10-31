@@ -1,4 +1,4 @@
-use board::vestaboard::{Background, COLS, Char, Color, Grid, wrap};
+use vestaboard::{Background, COLS, Char, Color, Grid, wrap};
 
 fn chars(text: &str) -> Vec<Char> {
     text.chars().map(|c| Char::try_from(c).unwrap()).collect()
@@ -27,6 +27,26 @@ fn colors_are_tiles() {
     let blue = Char::from(Color::Blue);
     assert_eq!(blue.code(), 67);
     assert_eq!(blue.to_string(), "\x1b[34m█\x1b[0m");
+}
+
+#[test]
+fn round_trips_color_squares() {
+    for color in Color::ALL {
+        assert_eq!(Char::try_from(color.square()).unwrap(), Char::from(color));
+        assert_eq!(Color::from_code(color as u8), Some(color));
+    }
+}
+
+#[test]
+fn reads_color_squares() {
+    assert_eq!(
+        Char::from_text("🟥A⬜\u{fe0f}").unwrap(),
+        [
+            Char::from(Color::Red),
+            chars("A")[0],
+            Char::from(Color::White)
+        ]
+    );
 }
 
 #[test]
@@ -61,6 +81,20 @@ fn wraps_and_keeps_paragraphs() {
     );
     assert_eq!(wrap(&[chars("AB CD EF")], 2, 2), None);
     assert_eq!(wrap(&[chars("TOOLONGWORD")], 5, 3), None);
+}
+
+#[test]
+fn keeps_spaces_and_blank_lines() {
+    assert_eq!(
+        wrap(&[chars("  A   B ")], 22, 6).unwrap(),
+        [chars("  A   B ")]
+    );
+    assert_eq!(
+        wrap(&[chars("A"), vec![], chars("B")], 22, 6).unwrap(),
+        [chars("A"), vec![], chars("B")]
+    );
+    let grid = Grid::from_text("AB    CD              ").unwrap();
+    assert_eq!(grid[2][..8], *chars("AB    CD"));
 }
 
 #[test]

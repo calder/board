@@ -1,0 +1,12 @@
+[package]
+name = "web"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+console_error_panic_hook = "0.1.7"
+gloo-net = { version = "0.7.0", default-features = false, features = ["http", "json"] }
+leptos = { version = "0.8.22", features = ["csr"] }
+vestaboard = { path = "../vestaboard", default-features = false }
+wasm-bindgen = "0.2.130"
+web-sys = { version = "0.3.107", features = ["Window", "Document", "Element", "HtmlElement", "HtmlTextAreaElement", "CssStyleDeclaration", "VisualViewport", "Location", "UrlSearchParams", "KeyboardEvent", "PointerEvent", "MediaQueryList", "Storage"] }
