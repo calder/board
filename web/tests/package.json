@@ -1,0 +1,13 @@
+{
+  "name": "board-layout-tests",
+  "version": "1.0.0",
+  "scripts": {
+    "update": "playwright test --update-snapshots",
+    "test": "playwright test"
+  },
+  "type": "commonjs",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}

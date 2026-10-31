@@ -1,0 +1,6 @@
+[[proxy]]
+backend = "http://127.0.0.1:8001/message"
+
+# Playwright writes screenshots and results here while tests run.
+[watch]
+ignore = ["tests"]

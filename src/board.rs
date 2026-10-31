@@ -1,11 +1,14 @@
-use anyhow::{Context, Result, bail};
+use std::sync::Mutex;
+use std::time::Duration;
 
-use super::grid::Grid;
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+use vestaboard::Grid;
 
 /// Vestaboard.
 pub enum Board {
     /// Test board (terminal).
-    Test,
+    Test { shown: Mutex<Grid> },
 
     /// Local Vestaboard.
     ///
@@ -21,14 +24,18 @@ impl Board {
     /// Construct board from environment variables.
     pub fn from_env() -> Result<Board> {
         if std::env::var("VESTABOARD_TEST").is_ok_and(|v| !v.is_empty() && v != "0") {
-            return Ok(Board::Test);
+            return Ok(Board::Test {
+                shown: Mutex::new(Grid::EMPTY),
+            });
         }
 
         let host = std::env::var("VESTABOARD_HOST").unwrap_or_else(|_| "vestaboard.local".into());
         let key = std::env::var("VESTABOARD_KEY").context("Missing VESTABOARD_KEY")?;
 
         Ok(Board::Local {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()?,
             host,
             key,
         })
@@ -36,14 +43,15 @@ impl Board {
 
     /// Show text centered on board.
     pub async fn show(&self, text: &str) -> Result<()> {
-        self.show_grid(&Grid::from_text(text)?).await
+        self.set_grid(&Grid::from_text(text)?).await
     }
 
-    /// Show full text grid on board.
-    pub async fn show_grid(&self, grid: &Grid) -> Result<()> {
+    /// Set grid.
+    pub async fn set_grid(&self, grid: &Grid) -> Result<()> {
         match self {
-            Board::Test => {
+            Board::Test { shown } => {
                 println!("{grid}");
+                *shown.lock().unwrap() = *grid;
 
                 Ok(())
             }
@@ -63,6 +71,35 @@ impl Board {
                 }
 
                 Ok(())
+            }
+        }
+    }
+
+    /// Get grid.
+    pub async fn get_grid(&self) -> Result<Grid> {
+        match self {
+            Board::Test { shown } => Ok(*shown.lock().unwrap()),
+            Board::Local { client, host, key } => {
+                #[derive(Deserialize)]
+                struct Shown {
+                    message: Grid,
+                }
+
+                let res = client
+                    .get(format!("http://{host}:7000/local-api/message"))
+                    .header("X-Vestaboard-Local-Api-Key", key)
+                    .send()
+                    .await?;
+                if !res.status().is_success() {
+                    bail!(
+                        "Vestaboard Local API {}: {}",
+                        res.status(),
+                        res.text().await?
+                    );
+                }
+                let shown: Shown = res.json().await?;
+
+                Ok(shown.message)
             }
         }
     }

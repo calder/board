@@ -1,4 +1,4 @@
-use board::vestaboard::{Background, COLS, Char, Color, Grid, wrap};
+use vestaboard::{Background, COLS, Char, Color, Grid, ROWS, Snapshot, wrap};
 
 fn chars(text: &str) -> Vec<Char> {
     text.chars().map(|c| Char::try_from(c).unwrap()).collect()
@@ -27,6 +27,26 @@ fn colors_are_tiles() {
     let blue = Char::from(Color::Blue);
     assert_eq!(blue.code(), 67);
     assert_eq!(blue.to_string(), "\x1b[34m█\x1b[0m");
+}
+
+#[test]
+fn round_trips_color_squares() {
+    for color in Color::ALL {
+        assert_eq!(Char::try_from(color.square()).unwrap(), Char::from(color));
+        assert_eq!(Color::from_code(color as u8), Some(color));
+    }
+}
+
+#[test]
+fn reads_color_squares() {
+    assert_eq!(
+        Char::from_text("🟥A⬜\u{fe0f}").unwrap(),
+        [
+            Char::from(Color::Red),
+            chars("A")[0],
+            Char::from(Color::White)
+        ]
+    );
 }
 
 #[test]
@@ -64,6 +84,20 @@ fn wraps_and_keeps_paragraphs() {
 }
 
 #[test]
+fn keeps_spaces_and_blank_lines() {
+    assert_eq!(
+        wrap(&[chars("  A   B ")], 22, 6).unwrap(),
+        [chars("  A   B ")]
+    );
+    assert_eq!(
+        wrap(&[chars("A"), vec![], chars("B")], 22, 6).unwrap(),
+        [chars("A"), vec![], chars("B")]
+    );
+    let grid = Grid::from_text("AB    CD              ").unwrap();
+    assert_eq!(grid[2][..8], *chars("AB    CD"));
+}
+
+#[test]
 fn centers_text() {
     let grid = Grid::from_text("hi").unwrap();
     let h = Char::try_from('H').unwrap();
@@ -96,4 +130,37 @@ fn explains_rejected_text() {
             .to_string(),
         "text doesn't fit on the board"
     );
+}
+
+#[test]
+fn reads_codes() {
+    let mut codes = [[0; COLS]; ROWS];
+    codes[0][..3].copy_from_slice(&[8, 9, 63]);
+    let grid = Grid::from_codes(codes).unwrap();
+    assert_eq!(grid[0][0], Char::try_from('H').unwrap());
+    assert_eq!(grid[0][2], Char::from(Color::Red));
+    assert_eq!(grid.codes(), codes);
+}
+
+#[test]
+fn rejects_unknown_codes() {
+    assert!(Char::try_from(43).is_err());
+    let mut codes = [[0; COLS]; ROWS];
+    codes[5][21] = 200;
+    assert!(Grid::from_codes(codes).is_err());
+}
+
+#[test]
+fn serializes_snapshot_as_codes() {
+    let mut grid = Grid::from_text("HI").unwrap();
+    grid.fill(Background::Blue);
+    let snapshot = Snapshot {
+        grid: Some(grid),
+        live: true,
+    };
+    let json = serde_json::to_string(&snapshot).unwrap();
+    assert!(json.starts_with("{\"grid\":[[67,"));
+    assert_eq!(serde_json::from_str::<Snapshot>(&json).unwrap(), snapshot);
+    let empty = serde_json::to_string(&Snapshot::default()).unwrap();
+    assert_eq!(empty, "{\"grid\":null,\"live\":false}");
 }
