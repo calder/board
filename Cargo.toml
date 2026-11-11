@@ -8,6 +8,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+async-trait = "0.1.92"
 axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive"] }
 dotenvy = "0.15.7"
@@ -21,4 +22,6 @@ vestaboard = { path = "vestaboard" }
 yansi = { version = "1.0.1", features = ["detect-tty", "detect-env"] }
 
 [dev-dependencies]
+mockall = "0.15.0"
+tokio = { version = "1.54.1", features = ["test-util"] }
 tower = { version = "0.5.3", features = ["util"] }

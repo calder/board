@@ -16,7 +16,7 @@ export default defineConfig({
     // binary in BOARD_BIN so the test job doesn't need Rust.
     command: `${process.env.BOARD_BIN ?? "cargo run --release --"} serve --port ${port}`,
     cwd: "../..",
-    env: { ...(process.env as Record<string, string>), VESTABOARD_TEST: "1" },
+    env: { ...(process.env as Record<string, string>), VESTABOARD_HOST: "" },
     url: `http://127.0.0.1:${port}`,
     timeout: 600_000,
   },

@@ -61,11 +61,11 @@ test("board", async ({ page }) => {
     Array.from({ length: 22 }, () => (row === 0 || row === 5 ? 67 : 0)),
   );
   grid[2].splice(8, 5, 8, 5, 12, 12, 15);
-  // The stream ends after one snapshot and waits long to retry, so the page settles offline.
+  // The stream ends after one grid and waits long to retry, so the page settles offline.
   await page.route("/events", (route) =>
     route.fulfill({
       contentType: "text/event-stream",
-      body: `retry: 600000\ndata: ${JSON.stringify({ grid, live: true })}\n\n`,
+      body: `retry: 600000\ndata: ${JSON.stringify(grid)}\n\n`,
     }),
   );
   await open(page, "/");

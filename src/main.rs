@@ -1,7 +1,9 @@
-use anyhow::Result;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use board::{Board, serve};
+use board::{Board, LocalBoard, TerminalBoard, serve};
 use vestaboard::Message;
 
 /// Vestaboard control.
@@ -27,6 +29,10 @@ enum Command {
         /// Port to listen on.
         #[arg(long, default_value_t = 8001)]
         port: u16,
+
+        /// File to keep app state in across restarts.
+        #[arg(long, default_value = "state/state.json")]
+        state: PathBuf,
     },
 }
 
@@ -35,10 +41,23 @@ async fn main() -> Result<()> {
     yansi::whenever(yansi::Condition::TTY_AND_COLOR);
     dotenvy::dotenv()?;
     let app = App::parse();
-    let board = Board::from_env()?;
+    let board = board()?;
 
     match app.command {
         Command::Show(message) => board.set_grid(&message.to_grid()?).await,
-        Command::Serve { host, port } => serve(board, &host, port).await,
+        Command::Serve { host, port, state } => serve(board, state, &host, port).await,
     }
+}
+
+/// Construct a board from environment variables.
+fn board() -> Result<Box<dyn Board>> {
+    let host = std::env::var("VESTABOARD_HOST").unwrap_or_default();
+    if host.is_empty() {
+        eprintln!("VESTABOARD_HOST is unset; running in dry-run mode");
+
+        return Ok(Box::new(TerminalBoard::default()));
+    }
+    let key = std::env::var("VESTABOARD_KEY").context("Missing VESTABOARD_KEY")?;
+
+    Ok(Box::new(LocalBoard::new(host, key)?))
 }
