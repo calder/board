@@ -6,14 +6,20 @@ use serde::{Deserialize, Serialize};
 use vestaboard::Grid;
 
 /// App state kept across restarts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     /// Grid the board should show.
-    pub grid: Option<Grid>,
+    pub grid: Grid,
+}
+
+impl Default for State {
+    fn default() -> State {
+        State { grid: Grid::EMPTY }
+    }
 }
 
 impl State {
-    /// Load state from `path` or start empty if it doesn't exist.
+    /// Load state from `path` or start from a blank grid if it doesn't exist.
     pub fn load(path: &Path) -> Result<State> {
         match std::fs::read_to_string(path) {
             Ok(json) => serde_json::from_str(&json)
