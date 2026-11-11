@@ -23,7 +23,7 @@ web/tests/run.sh --update-snapshots  # Regenerate screenshots
 
 ## 🚀 Deploy
 
-Build and install on the Raspberry Pi over SSH (`BOARD_HOST`, default `pi`):
+Build and install on Raspberry Pi:
 
 ```sh
 deploy/deploy.sh              # build, copy, restart
