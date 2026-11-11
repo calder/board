@@ -109,10 +109,9 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
     Ok(())
 }
 
-/// Write the desired grid whenever it changes and retry failures every `RETRY`.
+/// Keep the board showing the desired grid.
 async fn update(server: Arc<Server>) {
     let mut state = server.state.subscribe();
-    // Write the restored grid right away.
     state.mark_changed();
     while state.changed().await.is_ok() {
         let Some(grid) = state.borrow_and_update().grid else {
@@ -122,7 +121,6 @@ async fn update(server: Arc<Server>) {
             eprintln!("Can't write the board: {err:#}");
             tokio::select! {
                 _ = tokio::time::sleep(RETRY) => {}
-                // Write the newer grid instead.
                 _ = state.changed() => {
                     state.mark_changed();
                     break;
