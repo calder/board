@@ -11,6 +11,16 @@ VESTABOARD_HOST=...     # Vestaboard local hostname (unset for dry-run mode)
 VESTABOARD_KEY=...      # Vestaboard local API key
 ```
 
+## 🧪 Test
+
+Layout tests run against browsers in Playwright's Docker image so screenshots match CI:
+
+```sh
+(cd web/tests && npm ci)
+web/tests/run.sh                     # Check screenshots
+web/tests/run.sh --update-snapshots  # Regenerate screenshots
+```
+
 ## 🚀 Deploy
 
 Merges to `main` build an aarch64 Linux binary (web assets embedded) and

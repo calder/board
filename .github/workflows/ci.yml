@@ -54,3 +54,64 @@ jobs:
 
       - run: trunk build
         working-directory: web
+
+  server:
+    name: server
+    # Matches the Ubuntu release in the screenshot image so the binary's glibc is compatible.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: board
+          path: target/release/board
+          retention-days: 1
+
+  screenshots:
+    name: screenshots
+    needs: server
+    runs-on: ubuntu-latest
+    # The job runs inside the pinned image web/tests/run.sh uses, so screenshots match the
+    # baselines. The server is built on the runner, so the image needs no Rust or C compiler.
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: board
+          path: bin
+
+      # Artifacts don't keep file permissions.
+      - run: chmod +x bin/board
+
+      # The server needs a .env file but the tests set everything they use.
+      - run: touch .env
+
+      - run: npm ci
+        working-directory: web/tests
+
+      - run: npx playwright test
+        working-directory: web/tests
+        env:
+          # Relative to the repo root, where the config starts the server.
+          BOARD_BIN: ./bin/board
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/tests/playwright-report
