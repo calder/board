@@ -174,7 +174,7 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
     Ok(())
 }
 
-/// Keep the board showing the desired grid including any countdown.
+/// Main control loop.
 async fn update(server: Arc<Server>) {
     loop {
         server.expire();

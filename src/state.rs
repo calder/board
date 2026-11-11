@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use vestaboard::Grid;
 
 /// How long past the ETA to keep showing a countdown.
-const TIMEOUT: Duration = Duration::from_mins(10);
+const COUNTDOWN_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// App state kept across restarts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +17,6 @@ pub struct State {
     pub grid: Grid,
 
     /// Arrival time of an active countdown.
-    #[serde(default)]
     pub countdown: Option<Timestamp>,
 }
 
@@ -81,7 +80,7 @@ fn countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
 
 /// Minutes to show at `now` or `None` if the countdown has finished.
 fn minutes_shown(eta: Timestamp, now: Timestamp) -> Option<u32> {
-    let timeout = eta.checked_add(TIMEOUT).ok()?;
+    let timeout = eta.checked_add(COUNTDOWN_TIMEOUT).ok()?;
     if now >= timeout {
         return None;
     }
