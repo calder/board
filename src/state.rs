@@ -9,8 +9,8 @@ use vestaboard::Background;
 use vestaboard::Grid;
 use vestaboard::Message;
 
-/// How long past the ETA to keep showing a dad countdown.
-const COUNTDOWN_TIMEOUT: Duration = Duration::from_mins(10);
+/// How long after arrival to keep showing the dad ETA.
+const DAD_ETA_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// App state kept across restarts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,15 +18,15 @@ pub struct State {
     /// Grid the board should show.
     pub grid: Grid,
 
-    /// Arrival time of an active dad countdown.
-    pub dad_countdown: Option<Timestamp>,
+    /// Arrival time of an active dad ETA.
+    pub dad_eta: Option<Timestamp>,
 }
 
 impl Default for State {
     fn default() -> State {
         State {
             grid: Grid::EMPTY,
-            dad_countdown: None,
+            dad_eta: None,
         }
     }
 }
@@ -56,16 +56,16 @@ impl State {
         Ok(())
     }
 
-    /// Grid to show at `now` including any dad countdown.
+    /// Grid to show at `now` including any dad ETA.
     pub fn displayed(&self, now: Timestamp) -> Grid {
-        self.dad_countdown
-            .and_then(|eta| dad_countdown_grid(eta, now))
+        self.dad_eta
+            .and_then(|eta| dad_eta_grid(eta, now))
             .unwrap_or(self.grid)
     }
 }
 
-/// Dad countdown grid at `now` or `None` if it has finished.
-fn dad_countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
+/// Dad ETA grid at `now` or `None` if it has finished.
+fn dad_eta_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
     let minutes = minutes_shown(eta, now)?;
     let unit = if minutes == 1 { "minute" } else { "minutes" };
     let clock = eta
@@ -99,9 +99,9 @@ fn background(eta: Timestamp, now: Timestamp) -> Background {
     }
 }
 
-/// Minutes to show at `now` or `None` if the dad countdown has finished.
+/// Minutes to show at `now` or `None` if the dad ETA has finished.
 fn minutes_shown(eta: Timestamp, now: Timestamp) -> Option<u32> {
-    let timeout = eta.checked_add(COUNTDOWN_TIMEOUT).ok()?;
+    let timeout = eta.checked_add(DAD_ETA_TIMEOUT).ok()?;
     if now >= timeout {
         return None;
     }

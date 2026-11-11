@@ -31,12 +31,12 @@ fn text(eta_clock: &str, minutes: u32, background: Background) -> Grid {
 fn state(grid: &str, eta: Option<Timestamp>) -> State {
     State {
         grid: Grid::from_text(grid).unwrap(),
-        dad_countdown: eta,
+        dad_eta: eta,
     }
 }
 
 #[test]
-fn shows_dad_countdown_then_restores() {
+fn shows_dad_eta_then_restores() {
     let now = "2026-11-11T19:00:00-08:00".parse::<Timestamp>().unwrap();
     let home = "HOME";
     // 42 minutes out snaps to T-60.
@@ -84,7 +84,7 @@ fn pads_morning_hour() {
 }
 
 #[test]
-fn colors_dad_countdown_background() {
+fn colors_dad_eta_background() {
     let now = "2026-11-11T19:00:00-08:00".parse::<Timestamp>().unwrap();
     assert_eq!(
         state("HOME", Some(at(now, 61))).displayed(now),
