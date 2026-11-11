@@ -58,7 +58,13 @@ jobs:
   screenshots:
     name: screenshots
     runs-on: ubuntu-latest
+    # The job runs inside the pinned image web/tests/container.sh uses, so screenshots match the
+    # baselines.
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:
+      # The image has no C compiler, which Rust needs for linking.
+      - run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
+
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
@@ -71,18 +77,13 @@ jobs:
         with:
           tool: trunk
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: web/tests/package-lock.json
-
       - run: cargo build --release
 
       - run: npm ci
         working-directory: web/tests
 
-      - run: web/tests/docker.sh
+      - run: npx playwright test
+        working-directory: web/tests
 
       - if: failure()
         uses: actions/upload-artifact@v4
