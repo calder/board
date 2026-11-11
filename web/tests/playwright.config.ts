@@ -12,8 +12,9 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   use: { baseURL: `http://127.0.0.1:${port}` },
   webServer: {
-    // Test mode prints messages instead of sending them to the board.
-    command: `cargo run --release -- serve --port ${port}`,
+    // Test mode prints messages instead of sending them to the board. CI passes a prebuilt
+    // binary in BOARD_BIN so the test job doesn't need Rust.
+    command: `${process.env.BOARD_BIN ?? "cargo run --release --"} serve --port ${port}`,
     cwd: "../..",
     env: { ...(process.env as Record<string, string>), VESTABOARD_TEST: "1" },
     url: `http://127.0.0.1:${port}`,

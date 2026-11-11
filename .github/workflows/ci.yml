@@ -55,16 +55,10 @@ jobs:
       - run: trunk build
         working-directory: web
 
-  screenshots:
-    name: screenshots
+  server:
+    name: server
     runs-on: ubuntu-latest
-    # The job runs inside the pinned image web/tests/run.sh uses, so screenshots match the
-    # baselines.
-    container: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:
-      # The image has no C compiler, which Rust needs for linking.
-      - run: apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev
-
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
@@ -79,11 +73,38 @@ jobs:
 
       - run: cargo build --release
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: board
+          path: target/release/board
+          retention-days: 1
+
+  screenshots:
+    name: screenshots
+    needs: server
+    runs-on: ubuntu-latest
+    # The job runs inside the pinned image web/tests/run.sh uses, so screenshots match the
+    # baselines. The server is built on the runner, so the image needs no Rust or C compiler.
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: board
+          path: bin
+
+      # Artifacts don't keep file permissions.
+      - run: chmod +x bin/board
+
       - run: npm ci
         working-directory: web/tests
 
       - run: npx playwright test
         working-directory: web/tests
+        env:
+          # Relative to the repo root, where the config starts the server.
+          BOARD_BIN: ./bin/board
 
       - if: failure()
         uses: actions/upload-artifact@v4
