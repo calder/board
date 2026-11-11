@@ -1,19 +1,19 @@
 use leptos::prelude::*;
-use vestaboard::Snapshot;
+use vestaboard::Grid;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{EventSource, MessageEvent};
 
-/// Keep `snapshot` updated from the board server and `connected` true while its stream is up.
-pub fn follow(snapshot: RwSignal<Snapshot>, connected: RwSignal<bool>) {
+/// Keep `board` updated from the board server and `connected` true while its stream is up.
+pub fn follow(board: RwSignal<Option<Grid>>, connected: RwSignal<bool>) {
     let Ok(events) = EventSource::new("/events") else {
         return;
     };
     let on_message = Closure::<dyn Fn(MessageEvent)>::new(move |event: MessageEvent| {
         if let Some(data) = event.data().as_string()
-            && let Ok(next) = serde_json::from_str(&data)
+            && let Ok(grid) = serde_json::from_str::<Grid>(&data)
         {
-            snapshot.set(next);
+            board.set(Some(grid));
             connected.set(true);
         }
     });

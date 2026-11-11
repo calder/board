@@ -1,11 +1,13 @@
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
+use axum::extract::Json;
+use axum::extract::State as AxumState;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Json, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -13,24 +15,27 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use rust_embed::Embed;
 use serde::Deserialize;
-use tokio::sync::Mutex;
 use tokio::sync::watch::Sender;
 use tokio_stream::wrappers::WatchStream;
 use tokio_stream::{Stream, StreamExt};
-use vestaboard::{Grid, Message, Snapshot};
+use vestaboard::{Grid, Message};
 
 use crate::board::Board;
+use crate::state::State;
 
-/// How often to reread the board to catch changes made elsewhere.
-const REFRESH: Duration = Duration::from_secs(30);
+/// Wait between board writes.
+const PERIOD: Duration = Duration::from_secs(1);
 
-/// Board with the server's copy of what it shows.
+/// Server with exclusive control of a board.
 pub struct Server {
-    /// Board locked for each read or send so a slow read can't overwrite a newer send.
-    board: Mutex<Board>,
+    /// Board kept in sync with the state.
+    board: Box<dyn Board>,
 
-    /// Latest snapshot for requests and open pages.
-    snapshot: Sender<Snapshot>,
+    /// File the state persists to.
+    path: PathBuf,
+
+    /// App state for requests and open pages.
+    state: Sender<State>,
 }
 
 type Reply = Result<StatusCode, (StatusCode, String)>;
@@ -49,12 +54,16 @@ struct GridRequest {
 }
 
 impl Server {
-    /// Constructor.
-    pub fn new(board: Board) -> Server {
-        Server {
-            board: Mutex::new(board),
-            snapshot: Sender::new(Snapshot::default()),
-        }
+    /// Start a server restoring its state from `path` and keeping `board` in sync with it.
+    pub fn start(board: Box<dyn Board>, path: PathBuf) -> Result<Arc<Server>> {
+        let server = Arc::new(Server {
+            board,
+            state: Sender::new(State::load(&path)?),
+            path,
+        });
+        tokio::spawn(update(server.clone()));
+
+        Ok(server)
     }
 
     /// Route the web page and HTTP API.
@@ -67,47 +76,32 @@ impl Server {
             .with_state(self)
     }
 
-    /// Get the latest snapshot.
-    pub fn snapshot(&self) -> Snapshot {
-        *self.snapshot.borrow()
+    /// Get the state.
+    pub fn state(&self) -> State {
+        *self.state.borrow()
     }
 
-    /// Record a board contact and notify open pages if anything changed.
-    fn record(&self, grid: Option<Grid>, live: bool) {
-        self.snapshot.send_if_modified(|snapshot| {
-            let next = Snapshot {
-                grid: grid.or(snapshot.grid),
-                live,
-            };
-            let changed = *snapshot != next;
-            *snapshot = next;
+    /// Make `grid` the desired grid and save it.
+    pub fn show(&self, grid: Grid) -> Result<()> {
+        let mut result = Ok(());
+        // Save while holding the state so concurrent requests save in order.
+        self.state.send_if_modified(|state| {
+            if state.grid == Some(grid) {
+                return false;
+            }
+            state.grid = Some(grid);
+            result = state.save(&self.path);
 
-            changed
+            true
         });
-    }
 
-    /// Show a grid and record the result.
-    async fn show(&self, grid: Grid) -> Result<()> {
-        let board = self.board.lock().await;
-        match board.set_grid(&grid).await {
-            Ok(()) => {
-                self.record(Some(grid), true);
-
-                Ok(())
-            }
-            Err(err) => {
-                self.record(None, false);
-
-                Err(err)
-            }
-        }
+        result
     }
 }
 
 /// Serve the web page and HTTP API until the process exits.
-pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
-    let server = Arc::new(Server::new(board));
-    tokio::spawn(refresh(server.clone()));
+pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16) -> Result<()> {
+    let server = Server::start(board, state)?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     eprintln!("Listening on {host}:{port}");
     axum::serve(listener, server.router()).await?;
@@ -115,26 +109,15 @@ pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Reread the board now and every `REFRESH`.
-async fn refresh(server: Arc<Server>) {
-    let mut ticks = tokio::time::interval(REFRESH);
-    let mut failing = false;
+/// Keep the board showing the desired grid.
+async fn update(server: Arc<Server>) {
     loop {
-        ticks.tick().await;
-        let board = server.board.lock().await;
-        match board.get_grid().await {
-            Ok(grid) => {
-                failing = false;
-                server.record(Some(grid), true);
-            }
-            Err(err) => {
-                if !failing {
-                    eprintln!("Can't read the board: {err:#}");
-                }
-                failing = true;
-                server.record(None, false);
-            }
+        if let Some(grid) = server.state().grid
+            && let Err(err) = server.board.set_grid(&grid).await
+        {
+            eprintln!("Error writing to board: {err:#}");
         }
+        tokio::time::sleep(PERIOD).await;
     }
 }
 
@@ -156,33 +139,38 @@ async fn page(uri: Uri) -> Response {
     ([(CONTENT_TYPE, file.metadata.mimetype())], file.data).into_response()
 }
 
-async fn get_grid(State(server): State<Arc<Server>>) -> Json<Snapshot> {
-    Json(server.snapshot())
+async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Option<Grid>> {
+    Json(server.state().grid)
 }
 
-/// Stream the snapshot now and whenever it changes.
+/// Stream the desired grid now and whenever it changes.
 async fn board_events(
-    State(server): State<Arc<Server>>,
+    AxumState(server): AxumState<Arc<Server>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let events = WatchStream::new(server.snapshot.subscribe()).map(|snapshot| {
-        Ok(Event::default().data(serde_json::to_string(&snapshot).expect("snapshots serialize")))
-    });
+    let events = WatchStream::new(server.state.subscribe())
+        .filter_map(|state| state.grid)
+        .map(|grid| {
+            Ok(Event::default().data(serde_json::to_string(&grid).expect("grids serialize")))
+        });
 
     Sse::new(events).keep_alive(KeepAlive::default())
 }
 
-async fn post_message(State(server): State<Arc<Server>>, Json(message): Json<Message>) -> Reply {
+async fn post_message(
+    AxumState(server): AxumState<Arc<Server>>,
+    Json(message): Json<Message>,
+) -> Reply {
     let grid = message
         .to_grid()
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("{err}\n")))?;
-    server.show(grid).await.map_err(internal)?;
+    server.show(grid).map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Show a full grid of character codes.
 async fn post_grid(
-    State(server): State<Arc<Server>>,
+    AxumState(server): AxumState<Arc<Server>>,
     request: Result<Json<GridRequest>, JsonRejection>,
 ) -> Reply {
     let Json(request) = request.map_err(|rejection| {
@@ -199,7 +187,7 @@ async fn post_grid(
             format!("invalid request: {detail}\n"),
         )
     })?;
-    server.show(request.grid).await.map_err(internal)?;
+    server.show(request.grid).map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
