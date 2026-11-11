@@ -1,20 +1,33 @@
 use std::io::ErrorKind;
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use vestaboard::Background;
 use vestaboard::Grid;
+use vestaboard::Message;
+
+/// How long after arrival to keep showing the dad ETA.
+const DAD_ETA_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// App state kept across restarts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     /// Grid the board should show.
     pub grid: Grid,
+
+    /// Arrival time of an active dad ETA.
+    pub dad_eta: Option<Timestamp>,
 }
 
 impl Default for State {
     fn default() -> State {
-        State { grid: Grid::EMPTY }
+        State {
+            grid: Grid::EMPTY,
+            dad_eta: None,
+        }
     }
 }
 
@@ -42,4 +55,69 @@ impl State {
 
         Ok(())
     }
+
+    /// Grid to show at `now` including any dad ETA.
+    pub fn displayed(&self, now: Timestamp) -> Grid {
+        self.dad_eta
+            .and_then(|eta| dad_eta_grid(eta, now))
+            .unwrap_or(self.grid)
+    }
+}
+
+/// Dad ETA grid at `now` or `None` if it has finished.
+fn dad_eta_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
+    let minutes = minutes_shown(eta, now)?;
+    let unit = if minutes == 1 { "minute" } else { "minutes" };
+    let clock = eta
+        .in_tz("America/Los_Angeles")
+        .ok()?
+        .strftime("%H:%M")
+        .to_string();
+
+    Message {
+        text: format!("DAD IN TRANSIT\nETA {clock}\n\nT-{minutes} {unit}"),
+        pad: true,
+        background: Some(background(eta, now)),
+    }
+    .to_grid()
+    .ok()
+}
+
+/// Background color for the time remaining until `eta`.
+fn background(eta: Timestamp, now: Timestamp) -> Background {
+    if now >= eta {
+        return Background::Green;
+    }
+    let secs = eta.duration_since(now).as_secs().max(0) as u64;
+
+    if secs > 60 * 60 {
+        Background::Red
+    } else if secs > 5 * 60 {
+        Background::Yellow
+    } else {
+        Background::Green
+    }
+}
+
+/// Minutes to show at `now` or `None` if the dad ETA has finished.
+fn minutes_shown(eta: Timestamp, now: Timestamp) -> Option<u32> {
+    let timeout = eta.checked_add(DAD_ETA_TIMEOUT).ok()?;
+    if now >= timeout {
+        return None;
+    }
+    if now >= eta {
+        return Some(1);
+    }
+    let secs = eta.duration_since(now).as_secs().max(0) as u64;
+    let left = secs.div_ceil(60) as u32;
+
+    Some(if secs <= 5 * 60 {
+        left.max(1)
+    } else if secs <= 10 * 60 {
+        10
+    } else if secs <= 30 * 60 {
+        30
+    } else {
+        left.div_ceil(30) * 30
+    })
 }
