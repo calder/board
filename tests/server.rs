@@ -9,6 +9,7 @@ use axum::body::{Body, to_bytes};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Method, Request, StatusCode};
 use board::{Server, State};
+use jiff::Timestamp;
 use mockall::mock;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
@@ -208,7 +209,13 @@ async fn restores_state() {
     let (server, mut writes) = start(path.clone(), 0);
     server.show(grid).unwrap();
     assert_eq!(writes.recv().await, Some(grid));
-    assert_eq!(State::load(&path).unwrap(), State { grid });
+    assert_eq!(
+        State::load(&path).unwrap(),
+        State {
+            grid,
+            countdown: None
+        }
+    );
     let (server, mut writes) = start(path, 0);
     assert_eq!(server.state().grid, grid);
     assert_eq!(writes.recv().await, Some(grid));
@@ -240,4 +247,71 @@ async fn writes_newer_grid() {
     let grid = Grid::from_text("BYE").unwrap();
     server.show(grid).unwrap();
     assert_eq!(writes.recv().await, Some(grid));
+}
+
+/// Post a countdown to `eta` and return the status and body.
+async fn post_countdown(server: &Arc<Server>, eta: Timestamp) -> (StatusCode, String) {
+    let body = serde_json::to_string(&json!({ "eta": eta })).unwrap();
+
+    send(server, Method::POST, "/countdown", &body).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn starts_and_cancels_countdown() {
+    let (server, mut writes) = test_server();
+    assert_eq!(writes.recv().await, Some(Grid::EMPTY));
+    let home = Grid::from_text("HOME").unwrap();
+    assert_eq!(
+        send(&server, Method::POST, "/message", r#"{"text": "HOME"}"#).await,
+        (StatusCode::NO_CONTENT, String::new())
+    );
+    assert_eq!(writes.recv().await, Some(home));
+    let eta = Timestamp::now()
+        .checked_add(Duration::from_mins(35))
+        .unwrap();
+    assert_eq!(
+        post_countdown(&server, eta).await,
+        (StatusCode::NO_CONTENT, String::new())
+    );
+    assert_ne!(server.displayed(), home);
+    let (status, _) = send(&server, Method::GET, "/grid", "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        send(&server, Method::DELETE, "/countdown", "").await,
+        (StatusCode::NO_CONTENT, String::new())
+    );
+    assert_eq!(server.displayed(), home);
+    assert!(server.state().countdown.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn message_stops_countdown() {
+    let (server, mut writes) = test_server();
+    assert_eq!(writes.recv().await, Some(Grid::EMPTY));
+    let eta = Timestamp::now()
+        .checked_add(Duration::from_mins(35))
+        .unwrap();
+    assert_eq!(
+        post_countdown(&server, eta).await,
+        (StatusCode::NO_CONTENT, String::new())
+    );
+    assert_eq!(
+        send(&server, Method::POST, "/message", r#"{"text": "HI"}"#).await,
+        (StatusCode::NO_CONTENT, String::new())
+    );
+    let hi = Grid::from_text("HI").unwrap();
+    assert_eq!(server.displayed(), hi);
+    assert!(server.state().countdown.is_none());
+    assert_eq!(writes.recv().await, Some(hi));
+}
+
+#[tokio::test]
+async fn rejects_finished_countdown() {
+    let (server, _writes) = test_server();
+    let eta = Timestamp::now()
+        .checked_sub(Duration::from_mins(11))
+        .unwrap();
+    let (status, body) = post_countdown(&server, eta).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(server.state().countdown.is_none());
 }

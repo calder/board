@@ -13,6 +13,7 @@ use axum::http::{StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use jiff::Timestamp;
 use rust_embed::Embed;
 use serde::Deserialize;
 use tokio::sync::watch::Sender;
@@ -53,6 +54,14 @@ struct GridRequest {
     grid: Grid,
 }
 
+/// Countdown to an arrival.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CountdownRequest {
+    /// Arrival time.
+    eta: Timestamp,
+}
+
 impl Server {
     /// Start a server restoring its state from `path` and keeping `board` in sync with it.
     pub fn start(board: Box<dyn Board>, path: PathBuf) -> Result<Arc<Server>> {
@@ -72,6 +81,7 @@ impl Server {
             .route("/events", get(board_events))
             .route("/grid", get(get_grid).post(post_grid))
             .route("/message", post(post_message))
+            .route("/countdown", post(post_countdown).delete(delete_countdown))
             .fallback(page)
             .with_state(self)
     }
@@ -81,21 +91,76 @@ impl Server {
         *self.state.borrow()
     }
 
+    /// Grid to show now including any countdown.
+    pub fn displayed(&self) -> Grid {
+        self.state().displayed(Timestamp::now())
+    }
+
     /// Make `grid` the desired grid and save it.
     pub fn show(&self, grid: Grid) -> Result<()> {
         let mut result = Ok(());
         // Save while holding the state so concurrent requests save in order.
         self.state.send_if_modified(|state| {
-            if state.grid == grid {
+            if state.grid == grid && state.countdown.is_none() {
                 return false;
             }
             state.grid = grid;
+            state.countdown = None;
             result = state.save(&self.path);
 
             true
         });
 
         result
+    }
+
+    /// Start a countdown to `eta` and save it.
+    pub fn start_countdown(&self, eta: Timestamp) -> Result<()> {
+        let mut result = Ok(());
+        self.state.send_if_modified(|state| {
+            if state.countdown == Some(eta) {
+                return false;
+            }
+            state.countdown = Some(eta);
+            result = state.save(&self.path);
+
+            true
+        });
+
+        result
+    }
+
+    /// Stop any countdown and keep the desired grid.
+    pub fn cancel_countdown(&self) -> Result<()> {
+        let mut result = Ok(());
+        self.state.send_if_modified(|state| {
+            if state.countdown.is_none() {
+                return false;
+            }
+            state.countdown = None;
+            result = state.save(&self.path);
+
+            true
+        });
+
+        result
+    }
+
+    fn expire(&self) {
+        let now = Timestamp::now();
+        let mut result = Ok(());
+        self.state.send_if_modified(|state| {
+            if state.displayed(now) != state.grid || state.countdown.is_none() {
+                return false;
+            }
+            state.countdown = None;
+            result = state.save(&self.path);
+
+            true
+        });
+        if let Err(err) = result {
+            log::error!("Error saving state: {err:#}");
+        }
     }
 }
 
@@ -109,10 +174,11 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
     Ok(())
 }
 
-/// Keep the board showing the desired grid.
+/// Keep the board showing the desired grid including any countdown.
 async fn update(server: Arc<Server>) {
     loop {
-        if let Err(err) = server.board.set_grid(&server.state().grid).await {
+        server.expire();
+        if let Err(err) = server.board.set_grid(&server.displayed()).await {
             log::error!("Error writing to board: {err:#}");
         }
         tokio::time::sleep(PERIOD).await;
@@ -138,7 +204,7 @@ async fn page(uri: Uri) -> Response {
 }
 
 async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Grid> {
-    Json(server.state().grid)
+    Json(server.displayed())
 }
 
 /// Stream the desired grid now and whenever it changes.
@@ -146,7 +212,9 @@ async fn board_events(
     AxumState(server): AxumState<Arc<Server>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let events = WatchStream::new(server.state.subscribe()).map(|state| {
-        Ok(Event::default().data(serde_json::to_string(&state.grid).expect("grids serialize")))
+        let grid = state.displayed(Timestamp::now());
+
+        Ok(Event::default().data(serde_json::to_string(&grid).expect("grids serialize")))
     });
 
     Sse::new(events).keep_alive(KeepAlive::default())
@@ -184,6 +252,34 @@ async fn post_grid(
         )
     })?;
     server.show(request.grid).map_err(internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Count down to an arrival then restore the board.
+async fn post_countdown(
+    AxumState(server): AxumState<Arc<Server>>,
+    Json(request): Json<CountdownRequest>,
+) -> Reply {
+    let preview = State {
+        grid: Grid::EMPTY,
+        countdown: Some(request.eta),
+    }
+    .displayed(Timestamp::now());
+    if preview == Grid::EMPTY {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "countdown is already over\n".into(),
+        ));
+    }
+    server.start_countdown(request.eta).map_err(internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Stop the countdown and restore the grid it replaced.
+async fn delete_countdown(AxumState(server): AxumState<Arc<Server>>) -> Reply {
+    server.cancel_countdown().map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
