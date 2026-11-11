@@ -60,9 +60,8 @@ impl Server {
     /// Route the web page and HTTP API.
     pub fn router(self: Arc<Self>) -> Router {
         Router::new()
-            .route("/board", get(get_board))
             .route("/events", get(board_events))
-            .route("/grid", post(post_grid))
+            .route("/grid", get(get_grid).post(post_grid))
             .route("/message", post(post_message))
             .fallback(page)
             .with_state(self)
@@ -157,7 +156,7 @@ async fn page(uri: Uri) -> Response {
     ([(CONTENT_TYPE, file.metadata.mimetype())], file.data).into_response()
 }
 
-async fn get_board(State(server): State<Arc<Server>>) -> Json<Snapshot> {
+async fn get_grid(State(server): State<Arc<Server>>) -> Json<Snapshot> {
     Json(server.snapshot())
 }
 
