@@ -53,6 +53,8 @@ async fn main() -> Result<()> {
 fn board() -> Result<Box<dyn Board>> {
     let host = std::env::var("VESTABOARD_HOST").unwrap_or_default();
     if host.is_empty() {
+        eprintln!("VESTABOARD_HOST is unset; running in dry-run mode");
+
         return Ok(Box::new(TerminalBoard::default()));
     }
     let key = std::env::var("VESTABOARD_KEY").context("Missing VESTABOARD_KEY")?;
