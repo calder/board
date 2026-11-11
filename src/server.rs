@@ -23,11 +23,8 @@ use vestaboard::{Grid, Message};
 use crate::board::Board;
 use crate::state::State;
 
-/// First wait before retrying a failed write.
-const FIRST_BACKOFF: Duration = Duration::from_secs(1);
-
-/// Longest wait between retries.
-const MAX_BACKOFF: Duration = Duration::from_secs(10 * 60);
+/// Wait before retrying a failed write.
+const RETRY: Duration = Duration::from_secs(10);
 
 /// Server with exclusive control of a board.
 pub struct Server {
@@ -112,7 +109,7 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
     Ok(())
 }
 
-/// Write the desired grid whenever it changes and retry failures backing off up to `MAX_BACKOFF`.
+/// Write the desired grid whenever it changes and retry failures every `RETRY`.
 async fn update(server: Arc<Server>) {
     let mut state = server.state.subscribe();
     // Write the restored grid right away.
@@ -121,11 +118,10 @@ async fn update(server: Arc<Server>) {
         let Some(grid) = state.borrow_and_update().grid else {
             continue;
         };
-        let mut wait = FIRST_BACKOFF;
         while let Err(err) = server.board.set_grid(&grid).await {
             eprintln!("Can't write the board: {err:#}");
             tokio::select! {
-                _ = tokio::time::sleep(wait) => wait = (wait * 2).min(MAX_BACKOFF),
+                _ = tokio::time::sleep(RETRY) => {}
                 // Write the newer grid instead.
                 _ = state.changed() => {
                     state.mark_changed();
