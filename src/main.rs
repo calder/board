@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -41,7 +42,12 @@ async fn main() -> Result<()> {
     yansi::whenever(yansi::Condition::TTY_AND_COLOR);
     dotenvy::dotenv()?;
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp(None)
+        .format(|buf, record| {
+            let ts = jiff::Zoned::now().strftime("%H:%M:%S%.3f");
+            let level = record.level();
+            let style = buf.default_level_style(level);
+            writeln!(buf, "{ts} {style}{level:<5}{style:#} {}", record.args())
+        })
         .init();
     let app = App::parse();
     let board = board()?;
