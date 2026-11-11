@@ -12,6 +12,7 @@ use board::{Server, State};
 use mockall::mock;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
+use tokio_stream::StreamExt;
 use tower::ServiceExt;
 use vestaboard::{COLS, Grid, ROWS};
 
@@ -93,8 +94,36 @@ fn blank() -> Vec<Vec<u32>> {
 }
 
 #[tokio::test(start_paused = true)]
+async fn starts_from_blank_grid() {
+    let path = state_path();
+    let (server, mut writes) = start(path.clone(), 0);
+    assert_eq!(server.state().grid, Grid::EMPTY);
+    assert_eq!(writes.recv().await, Some(Grid::EMPTY));
+    assert!(!path.exists());
+    let (status, grid) = send(&server, Method::GET, "/grid", "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        serde_json::from_str::<Value>(&grid).unwrap(),
+        json!(blank())
+    );
+
+    let request = Request::builder()
+        .uri("/events")
+        .body(Body::from(""))
+        .unwrap();
+    let response = server.clone().router().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+    let chunk = stream.next().await.unwrap().unwrap();
+    let event = String::from_utf8(chunk.to_vec()).unwrap();
+    let expected = format!("data: {}", json!(blank()));
+    assert!(event.contains(&expected), "{event}");
+}
+
+#[tokio::test(start_paused = true)]
 async fn shows_grid() {
     let (server, mut writes) = test_server();
+    assert_eq!(writes.recv().await, Some(Grid::EMPTY));
     let mut rows = blank();
     rows[0][0] = 8;
     rows[0][1] = 9;
@@ -113,10 +142,11 @@ async fn shows_grid() {
 #[tokio::test(start_paused = true)]
 async fn shows_message() {
     let (server, mut writes) = test_server();
+    assert_eq!(writes.recv().await, Some(Grid::EMPTY));
     let (status, _) = send(&server, Method::POST, "/message", r#"{"text": "HI"}"#).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let grid = Grid::from_text("HI").unwrap();
-    assert_eq!(server.state().grid, Some(grid));
+    assert_eq!(server.state().grid, grid);
     assert_eq!(writes.recv().await, Some(grid));
 }
 
@@ -133,9 +163,11 @@ async fn rejects_bad_shapes() {
         wide.contains("grid: row 4: expected 22 columns, got 23"),
         "{wide}"
     );
-    assert!(server.state().grid.is_none());
+    assert_eq!(server.state().grid, Grid::EMPTY);
     settle().await;
-    assert!(writes.try_recv().is_err());
+    while let Ok(grid) = writes.try_recv() {
+        assert_eq!(grid, Grid::EMPTY);
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -148,7 +180,7 @@ async fn rejects_unknown_codes() {
         unknown.starts_with("invalid request: grid: row 1, column 3: unknown character code 99"),
         "{unknown}"
     );
-    assert!(server.state().grid.is_none());
+    assert_eq!(server.state().grid, Grid::EMPTY);
 }
 
 #[tokio::test(start_paused = true)]
@@ -164,7 +196,7 @@ async fn rejects_bad_json() {
     assert!(missing.contains("missing field `grid`"), "{missing}");
     let negative = rejected(&server, r#"{"grid": [[-1]]}"#).await;
     assert!(negative.starts_with("invalid request: "), "{negative}");
-    assert!(server.state().grid.is_none());
+    assert_eq!(server.state().grid, Grid::EMPTY);
 }
 
 #[tokio::test(start_paused = true)]
@@ -176,9 +208,9 @@ async fn restores_state() {
     let (server, mut writes) = start(path.clone(), 0);
     server.show(grid).unwrap();
     assert_eq!(writes.recv().await, Some(grid));
-    assert_eq!(State::load(&path).unwrap(), State { grid: Some(grid) });
+    assert_eq!(State::load(&path).unwrap(), State { grid });
     let (server, mut writes) = start(path, 0);
-    assert_eq!(server.state().grid, Some(grid));
+    assert_eq!(server.state().grid, grid);
     assert_eq!(writes.recv().await, Some(grid));
 }
 

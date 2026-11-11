@@ -86,10 +86,10 @@ impl Server {
         let mut result = Ok(());
         // Save while holding the state so concurrent requests save in order.
         self.state.send_if_modified(|state| {
-            if state.grid == Some(grid) {
+            if state.grid == grid {
                 return false;
             }
-            state.grid = Some(grid);
+            state.grid = grid;
             result = state.save(&self.path);
 
             true
@@ -112,9 +112,7 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
 /// Keep the board showing the desired grid.
 async fn update(server: Arc<Server>) {
     loop {
-        if let Some(grid) = server.state().grid
-            && let Err(err) = server.board.set_grid(&grid).await
-        {
+        if let Err(err) = server.board.set_grid(&server.state().grid).await {
             eprintln!("Error writing to board: {err:#}");
         }
         tokio::time::sleep(PERIOD).await;
@@ -139,7 +137,7 @@ async fn page(uri: Uri) -> Response {
     ([(CONTENT_TYPE, file.metadata.mimetype())], file.data).into_response()
 }
 
-async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Option<Grid>> {
+async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Grid> {
     Json(server.state().grid)
 }
 
@@ -147,11 +145,9 @@ async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Option<Grid
 async fn board_events(
     AxumState(server): AxumState<Arc<Server>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let events = WatchStream::new(server.state.subscribe())
-        .filter_map(|state| state.grid)
-        .map(|grid| {
-            Ok(Event::default().data(serde_json::to_string(&grid).expect("grids serialize")))
-        });
+    let events = WatchStream::new(server.state.subscribe()).map(|state| {
+        Ok(Event::default().data(serde_json::to_string(&state.grid).expect("grids serialize")))
+    });
 
     Sse::new(events).keep_alive(KeepAlive::default())
 }
