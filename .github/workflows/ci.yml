@@ -77,9 +77,6 @@ jobs:
           cache: npm
           cache-dependency-path: web/tests/package-lock.json
 
-      # The server needs a .env file but the tests set everything they use.
-      - run: touch .env
-
       - run: cargo build --release
 
       - run: npm ci

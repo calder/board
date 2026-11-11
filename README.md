@@ -4,7 +4,7 @@ Vestaboard controller.
 
 ## 🛠️ Setup
 
-Configure `.env`:
+Configure `.env` or the environment:
 
 ```sh
 VESTABOARD_HOST=...     # Vestaboard local hostname

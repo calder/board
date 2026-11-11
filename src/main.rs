@@ -33,7 +33,11 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     yansi::whenever(yansi::Condition::TTY_AND_COLOR);
-    dotenvy::dotenv()?;
+    if let Err(error) = dotenvy::dotenv()
+        && !error.not_found()
+    {
+        return Err(error.into());
+    }
     let app = App::parse();
     let board = Board::from_env()?;
 
