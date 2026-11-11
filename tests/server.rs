@@ -1,17 +1,26 @@
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::{Body, to_bytes};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Method, Request, StatusCode};
-use board::{Board, Server};
+use board::{AppState, Board, Server};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 use vestaboard::{COLS, Grid, ROWS};
 
-/// Make a server with a dry-run board.
+/// Make a fresh state file path.
+fn state_path() -> PathBuf {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, Ordering::SeqCst);
+
+    std::env::temp_dir().join(format!("board-test-{}-{n}/state.json", std::process::id()))
+}
+
+/// Make a server with a dry-run board and fresh state.
 fn test_server() -> Arc<Server> {
-    Arc::new(Server::new(Board::test(Grid::EMPTY)))
+    Arc::new(Server::new(Board::test(Grid::EMPTY), state_path()).unwrap())
 }
 
 /// Get what a test board shows and how often it was written.
@@ -24,11 +33,11 @@ fn board(server: &Server) -> (Grid, usize) {
 }
 
 /// Make a test board fail or recover.
-fn fail(server: &Server, failing: bool) {
-    let Board::Test { failing: flag, .. } = server.board() else {
+fn fail(server: &Server, fail: bool) {
+    let Board::Test { fail: flag, .. } = server.board() else {
         unreachable!("test servers use test boards");
     };
-    flag.store(failing, Ordering::SeqCst);
+    flag.store(fail, Ordering::SeqCst);
 }
 
 /// Send a request and return its status and body.
@@ -142,13 +151,23 @@ async fn rejects_bad_json() {
 }
 
 #[tokio::test]
-async fn adopts_board_grid() {
-    let grid = Grid::from_text("HELLO").unwrap();
-    let server = Arc::new(Server::new(Board::test(grid)));
-    assert!(server.reconcile().await.unwrap());
+async fn restores_state() {
+    let path = state_path();
+    let mut rows = blank();
+    rows[2][8] = 8;
+    let grid: Grid = serde_json::from_value(json!(rows)).unwrap();
+    let server = Arc::new(Server::new(Board::test(Grid::EMPTY), path.clone()).unwrap());
+    server.show(grid).await.unwrap();
+    assert_eq!(
+        AppState::load(&path).unwrap(),
+        AppState { grid: Some(grid) }
+    );
+    let server = Arc::new(Server::new(Board::test(Grid::EMPTY), path).unwrap());
     assert_eq!(server.snapshot().grid, Some(grid));
+    assert!(!server.snapshot().live);
+    server.sync().await.unwrap();
+    assert_eq!(board(&server), (grid, 1));
     assert!(server.snapshot().live);
-    assert_eq!(board(&server), (grid, 0));
 }
 
 #[tokio::test]
@@ -157,23 +176,8 @@ async fn skips_unchanged_grid() {
     let grid = Grid::from_text("HI").unwrap();
     server.show(grid).await.unwrap();
     server.show(grid).await.unwrap();
-    assert!(server.reconcile().await.unwrap());
+    server.sync().await.unwrap();
     assert_eq!(board(&server), (grid, 1));
-}
-
-#[tokio::test]
-async fn rewrites_changed_board() {
-    let server = test_server();
-    let grid = Grid::from_text("HI").unwrap();
-    server.show(grid).await.unwrap();
-    let Board::Test { shown, .. } = server.board() else {
-        unreachable!("test servers use test boards");
-    };
-    *shown.lock().unwrap() = Grid::EMPTY;
-    assert!(!server.reconcile().await.unwrap());
-    assert_eq!(board(&server), (grid, 2));
-    assert!(server.reconcile().await.unwrap());
-    assert_eq!(board(&server), (grid, 2));
 }
 
 #[tokio::test]
@@ -185,9 +189,9 @@ async fn retries_after_failure() {
     let grid = Grid::from_text("HI").unwrap();
     assert_eq!(server.snapshot().grid, Some(grid));
     assert!(!server.snapshot().live);
-    assert!(server.reconcile().await.is_err());
+    assert!(server.sync().await.is_err());
     fail(&server, false);
-    assert!(!server.reconcile().await.unwrap());
+    server.sync().await.unwrap();
     assert_eq!(board(&server), (grid, 1));
     assert!(server.snapshot().live);
 }

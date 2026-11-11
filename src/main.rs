@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
@@ -27,6 +29,10 @@ enum Command {
         /// Port to listen on.
         #[arg(long, default_value_t = 8001)]
         port: u16,
+
+        /// File to keep app state in across restarts.
+        #[arg(long, default_value = "state/state.json")]
+        state: PathBuf,
     },
 }
 
@@ -39,6 +45,6 @@ async fn main() -> Result<()> {
 
     match app.command {
         Command::Show(message) => board.set_grid(&message.to_grid()?).await,
-        Command::Serve { host, port } => serve(board, &host, port).await,
+        Command::Serve { host, port, state } => serve(board, state, &host, port).await,
     }
 }

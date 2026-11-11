@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,12 +20,13 @@ use tokio_stream::wrappers::WatchStream;
 use tokio_stream::{Stream, StreamExt};
 use vestaboard::{Grid, Message, Snapshot};
 
+use crate::app_state::AppState;
 use crate::board::Board;
 
-/// How often to reread the board while it shows the desired grid.
-const REFRESH: Duration = Duration::from_secs(30);
+/// How often to check for a failed write to retry.
+const RETRY: Duration = Duration::from_secs(30);
 
-/// Longest wait between rereads after a failure or a rewrite.
+/// Longest wait between retries.
 const MAX_BACKOFF: Duration = Duration::from_secs(10 * 60);
 
 /// Server with exclusive control of a board.
@@ -32,8 +34,11 @@ pub struct Server {
     /// Board.
     board: Board,
 
-    /// Grid the board last confirmed showing locked for each board contact.
-    shown: Mutex<Option<Grid>>,
+    /// File the desired state persists to.
+    path: PathBuf,
+
+    /// Grid last written to the board locked for each write.
+    written: Mutex<Option<Grid>>,
 
     /// Desired grid and board health for requests and open pages.
     snapshot: Sender<Snapshot>,
@@ -55,13 +60,19 @@ struct GridRequest {
 }
 
 impl Server {
-    /// Constructor.
-    pub fn new(board: Board) -> Server {
-        Server {
+    /// Construct a server restoring the desired state from `path`.
+    pub fn new(board: Board, path: PathBuf) -> Result<Server> {
+        let state = AppState::load(&path)?;
+
+        Ok(Server {
             board,
-            shown: Mutex::new(None),
-            snapshot: Sender::new(Snapshot::default()),
-        }
+            path,
+            written: Mutex::new(None),
+            snapshot: Sender::new(Snapshot {
+                grid: state.grid,
+                live: false,
+            }),
+        })
     }
 
     /// Route the web page and HTTP API.
@@ -84,49 +95,36 @@ impl Server {
         *self.snapshot.borrow()
     }
 
-    /// Make `grid` the desired grid and write it unless the board already shows it.
+    /// Make `grid` the desired grid then save and write it.
     pub async fn show(&self, grid: Grid) -> Result<()> {
         self.update(|snapshot| snapshot.grid = Some(grid));
-        let mut shown = self.shown.lock().await;
+        let mut written = self.written.lock().await;
         // A newer request may have replaced the desired grid while this one waited.
-        let desired = self.snapshot().grid.unwrap_or(grid);
-        if *shown == Some(desired) {
+        AppState {
+            grid: self.snapshot().grid,
+        }
+        .save(&self.path)?;
+
+        self.write(&mut written).await
+    }
+
+    /// Write the desired grid unless it was already written.
+    pub async fn sync(&self) -> Result<()> {
+        let mut written = self.written.lock().await;
+
+        self.write(&mut written).await
+    }
+
+    /// Write the desired grid to the locked board unless it was already written.
+    async fn write(&self, written: &mut Option<Grid>) -> Result<()> {
+        let Some(grid) = self.snapshot().grid else {
+            return Ok(());
+        };
+        if *written == Some(grid) {
             return Ok(());
         }
-
-        self.write(&mut shown, desired).await
-    }
-
-    /// Reread the board and rewrite or adopt the desired grid returning whether they matched.
-    pub async fn reconcile(&self) -> Result<bool> {
-        let mut shown = self.shown.lock().await;
-        let grid = match self.board.get_grid().await {
-            Ok(grid) => grid,
-            Err(err) => {
-                *shown = None;
-                self.update(|snapshot| snapshot.live = false);
-
-                return Err(err);
-            }
-        };
-        *shown = Some(grid);
-        let mut desired = grid;
-        self.update(|snapshot| {
-            desired = *snapshot.grid.get_or_insert(grid);
-            snapshot.live = true;
-        });
-        if desired == grid {
-            return Ok(true);
-        }
-        self.write(&mut shown, desired).await?;
-
-        Ok(false)
-    }
-
-    /// Write a grid to the locked board and record the result.
-    async fn write(&self, shown: &mut Option<Grid>, grid: Grid) -> Result<()> {
         let result = self.board.set_grid(&grid).await;
-        *shown = result.is_ok().then_some(grid);
+        *written = result.is_ok().then_some(grid);
         self.update(|snapshot| snapshot.live = result.is_ok());
 
         result
@@ -144,8 +142,8 @@ impl Server {
 }
 
 /// Serve the web page and HTTP API until the process exits.
-pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
-    let server = Arc::new(Server::new(board));
+pub async fn serve(board: Board, state: PathBuf, host: &str, port: u16) -> Result<()> {
+    let server = Arc::new(Server::new(board, state)?);
     tokio::spawn(control(server.clone()));
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     eprintln!("Listening on {host}:{port}");
@@ -154,24 +152,19 @@ pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Reconcile the board now and every `REFRESH` backing off while it fails or drifts.
+/// Write the desired grid now and retry failures backing off up to `MAX_BACKOFF`.
 async fn control(server: Arc<Server>) {
-    let mut wait = REFRESH;
+    let mut wait = RETRY;
     let mut failing = false;
     loop {
-        match server.reconcile().await {
-            Ok(true) => {
+        match server.sync().await {
+            Ok(()) => {
                 failing = false;
-                wait = REFRESH;
-            }
-            Ok(false) => {
-                failing = false;
-                eprintln!("Rewrote the board after it changed");
-                wait = (wait * 2).min(MAX_BACKOFF);
+                wait = RETRY;
             }
             Err(err) => {
                 if !failing {
-                    eprintln!("Can't reconcile the board: {err:#}");
+                    eprintln!("Can't write the board: {err:#}");
                 }
                 failing = true;
                 wait = (wait * 2).min(MAX_BACKOFF);

@@ -12,7 +12,7 @@ pub enum Board {
     Test {
         shown: Mutex<Grid>,
         writes: AtomicUsize,
-        failing: AtomicBool,
+        fail: AtomicBool,
     },
 
     /// Local Vestaboard.
@@ -49,7 +49,7 @@ impl Board {
         Board::Test {
             shown: Mutex::new(grid),
             writes: AtomicUsize::new(0),
-            failing: AtomicBool::new(false),
+            fail: AtomicBool::new(false),
         }
     }
 
@@ -64,9 +64,9 @@ impl Board {
             Board::Test {
                 shown,
                 writes,
-                failing,
+                fail,
             } => {
-                if failing.load(Ordering::SeqCst) {
+                if fail.load(Ordering::SeqCst) {
                     bail!("test failure");
                 }
                 println!("{grid}");
@@ -98,8 +98,8 @@ impl Board {
     /// Get grid.
     pub async fn get_grid(&self) -> Result<Grid> {
         match self {
-            Board::Test { shown, failing, .. } => {
-                if failing.load(Ordering::SeqCst) {
+            Board::Test { shown, fail, .. } => {
+                if fail.load(Ordering::SeqCst) {
                     bail!("test failure");
                 }
 
