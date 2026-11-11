@@ -44,7 +44,7 @@ impl Grid {
         Ok(grid)
     }
 
-    /// Grid of codes from a request, naming the first bad row or tile counting from 0.
+    /// Read rows of codes and name the first bad row or column counting from 0.
     pub fn from_code_rows(rows: &[Vec<u32>]) -> Result<Grid> {
         ensure!(
             rows.len() == ROWS,
