@@ -115,7 +115,7 @@ async fn update(server: Arc<Server>) {
         if let Some(grid) = server.state().grid
             && let Err(err) = server.board.set_grid(&grid).await
         {
-            eprintln!("Can't write the board: {err:#}");
+            eprintln!("Error writing to board: {err:#}");
         }
         tokio::time::sleep(PERIOD).await;
     }
