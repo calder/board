@@ -23,8 +23,8 @@ use vestaboard::{Grid, Message};
 use crate::board::Board;
 use crate::state::State;
 
-/// Wait before retrying a failed write.
-const RETRY: Duration = Duration::from_secs(10);
+/// Wait between board writes.
+const PERIOD: Duration = Duration::from_secs(1);
 
 /// Server with exclusive control of a board.
 pub struct Server {
@@ -111,22 +111,13 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
 
 /// Keep the board showing the desired grid.
 async fn update(server: Arc<Server>) {
-    let mut state = server.state.subscribe();
-    state.mark_changed();
-    while state.changed().await.is_ok() {
-        let Some(grid) = state.borrow_and_update().grid else {
-            continue;
-        };
-        while let Err(err) = server.board.set_grid(&grid).await {
+    loop {
+        if let Some(grid) = server.state().grid
+            && let Err(err) = server.board.set_grid(&grid).await
+        {
             eprintln!("Can't write the board: {err:#}");
-            tokio::select! {
-                _ = tokio::time::sleep(RETRY) => {}
-                _ = state.changed() => {
-                    state.mark_changed();
-                    break;
-                }
-            }
         }
+        tokio::time::sleep(PERIOD).await;
     }
 }
 
