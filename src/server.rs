@@ -4,13 +4,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Json, State};
-use axum::http::{StatusCode, Uri, header};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use rust_embed::Embed;
-use tokio::sync::{Mutex, watch};
+use serde::Deserialize;
+use tokio::sync::Mutex;
+use tokio::sync::watch::Sender;
 use tokio_stream::wrappers::WatchStream;
 use tokio_stream::{Stream, StreamExt};
 use vestaboard::{Grid, Message, Snapshot};
@@ -20,7 +24,16 @@ use crate::board::Board;
 /// How often to reread the board to catch changes made elsewhere.
 const REFRESH: Duration = Duration::from_secs(30);
 
-type Reply = Result<String, (StatusCode, String)>;
+/// Board with the server's copy of what it shows.
+pub struct Server {
+    /// Board locked for each read or send so a slow read can't overwrite a newer send.
+    board: Mutex<Board>,
+
+    /// Latest snapshot for requests and open pages.
+    snapshot: Sender<Snapshot>,
+}
+
+type Reply = Result<StatusCode, (StatusCode, String)>;
 
 /// Web page built by `trunk build --release` in `web/`.
 #[derive(Embed)]
@@ -28,16 +41,38 @@ type Reply = Result<String, (StatusCode, String)>;
 #[allow_missing = true]
 struct Page;
 
-/// Board with the server's copy of what it shows.
-struct Server {
-    /// Board locked for each read or send so a slow read can't overwrite a newer send.
-    board: Mutex<Board>,
-
-    /// Latest snapshot for requests and open pages.
-    snapshot: watch::Sender<Snapshot>,
+/// Full grid to show.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GridRequest {
+    grid: Grid,
 }
 
 impl Server {
+    /// Constructor.
+    pub fn new(board: Board) -> Server {
+        Server {
+            board: Mutex::new(board),
+            snapshot: Sender::new(Snapshot::default()),
+        }
+    }
+
+    /// Route the web page and HTTP API.
+    pub fn router(self: Arc<Self>) -> Router {
+        Router::new()
+            .route("/board", get(get_board))
+            .route("/board/events", get(board_events))
+            .route("/grid", post(post_grid))
+            .route("/message", post(post_message))
+            .fallback(page)
+            .with_state(self)
+    }
+
+    /// Get the latest snapshot.
+    pub fn snapshot(&self) -> Snapshot {
+        *self.snapshot.borrow()
+    }
+
     /// Record a board contact and notify open pages if anything changed.
     fn record(&self, grid: Option<Grid>, live: bool) {
         self.snapshot.send_if_modified(|snapshot| {
@@ -51,24 +86,32 @@ impl Server {
             changed
         });
     }
+
+    /// Show a grid and record the result.
+    async fn show(&self, grid: Grid) -> Result<()> {
+        let board = self.board.lock().await;
+        match board.set_grid(&grid).await {
+            Ok(()) => {
+                self.record(Some(grid), true);
+
+                Ok(())
+            }
+            Err(err) => {
+                self.record(None, false);
+
+                Err(err)
+            }
+        }
+    }
 }
 
 /// Serve the web page and HTTP API until the process exits.
 pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
-    let server = Arc::new(Server {
-        board: Mutex::new(board),
-        snapshot: watch::Sender::new(Snapshot::default()),
-    });
+    let server = Arc::new(Server::new(board));
     tokio::spawn(refresh(server.clone()));
-    let app = Router::new()
-        .route("/board", get(get_board))
-        .route("/board/events", get(board_events))
-        .route("/message", post(post_message))
-        .fallback(page)
-        .with_state(server);
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     eprintln!("Listening on {host}:{port}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, server.router()).await?;
 
     Ok(())
 }
@@ -111,15 +154,11 @@ async fn page(uri: Uri) -> Response {
         return (StatusCode::NOT_FOUND, hint).into_response();
     };
 
-    (
-        [(header::CONTENT_TYPE, file.metadata.mimetype())],
-        file.data,
-    )
-        .into_response()
+    ([(CONTENT_TYPE, file.metadata.mimetype())], file.data).into_response()
 }
 
 async fn get_board(State(server): State<Arc<Server>>) -> Json<Snapshot> {
-    Json(*server.snapshot.borrow())
+    Json(server.snapshot())
 }
 
 /// Stream the snapshot now and whenever it changes.
@@ -137,17 +176,33 @@ async fn post_message(State(server): State<Arc<Server>>, Json(message): Json<Mes
     let grid = message
         .to_grid()
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("{err}\n")))?;
-    let board = server.board.lock().await;
-    match board.set_grid(&grid).await {
-        Ok(()) => server.record(Some(grid), true),
-        Err(err) => {
-            server.record(None, false);
+    server.show(grid).await.map_err(internal)?;
 
-            return Err(internal(err));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Show a full grid of character codes.
+async fn post_grid(
+    State(server): State<Arc<Server>>,
+    request: Result<Json<GridRequest>, JsonRejection>,
+) -> Reply {
+    let Json(request) = request.map_err(|rejection| {
+        // Prefer serde's message naming the bad field over axum's summary.
+        let mut detail = rejection.body_text();
+        let mut source = std::error::Error::source(&rejection);
+        while let Some(err) = source {
+            detail = err.to_string();
+            source = err.source();
         }
-    }
 
-    Ok("Shown\n".into())
+        (
+            StatusCode::BAD_REQUEST,
+            format!("invalid request: {detail}\n"),
+        )
+    })?;
+    server.show(request.grid).await.map_err(internal)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn internal(err: anyhow::Error) -> (StatusCode, String) {

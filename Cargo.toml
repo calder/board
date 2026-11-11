@@ -19,3 +19,6 @@ tokio = { version = "1.54.1", features = ["full"] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
 vestaboard = { path = "vestaboard" }
 yansi = { version = "1.0.1", features = ["detect-tty", "detect-env"] }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }

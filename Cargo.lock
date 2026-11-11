@@ -272,6 +272,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tower",
  "vestaboard",
  "yansi",
 ]
