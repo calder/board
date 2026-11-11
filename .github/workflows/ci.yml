@@ -57,7 +57,8 @@ jobs:
 
   server:
     name: server
-    runs-on: ubuntu-latest
+    # Matches the Ubuntu release in the screenshot image so the binary's glibc is compatible.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
