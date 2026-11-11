@@ -61,7 +61,7 @@ impl Server {
     pub fn router(self: Arc<Self>) -> Router {
         Router::new()
             .route("/board", get(get_board))
-            .route("/board/events", get(board_events))
+            .route("/events", get(board_events))
             .route("/grid", post(post_grid))
             .route("/message", post(post_message))
             .fallback(page)

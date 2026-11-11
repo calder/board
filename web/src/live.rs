@@ -6,7 +6,7 @@ use web_sys::{EventSource, MessageEvent};
 
 /// Keep `snapshot` updated from the board server and `connected` true while its stream is up.
 pub fn follow(snapshot: RwSignal<Snapshot>, connected: RwSignal<bool>) {
-    let Ok(events) = EventSource::new("/board/events") else {
+    let Ok(events) = EventSource::new("/events") else {
         return;
     };
     let on_message = Closure::<dyn Fn(MessageEvent)>::new(move |event: MessageEvent| {
