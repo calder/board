@@ -194,3 +194,13 @@ fn names_bad_code_rows() {
     huge[0][0] = 300;
     assert_eq!(error(&huge), "row 0, column 0: unknown character code 300");
 }
+
+#[test]
+fn deserializing_names_bad_tiles() {
+    let error = |json: &str| serde_json::from_str::<Grid>(json).unwrap_err().to_string();
+    assert!(error("[[0]]").starts_with("expected 6 rows, got 1"));
+    let mut rows = vec![vec![0; COLS]; ROWS];
+    rows[2][7] = 43;
+    let json = serde_json::to_string(&rows).unwrap();
+    assert!(error(&json).starts_with("row 2, column 7: unknown character code 43"));
+}

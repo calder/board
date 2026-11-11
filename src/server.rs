@@ -33,7 +33,7 @@ pub struct Server {
     snapshot: Sender<Snapshot>,
 }
 
-type Reply = Result<String, (StatusCode, String)>;
+type Reply = Result<StatusCode, (StatusCode, String)>;
 
 /// Web page built by `trunk build --release` in `web/`.
 #[derive(Embed)]
@@ -45,12 +45,11 @@ struct Page;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GridRequest {
-    /// Character codes in 6 rows of 22.
-    grid: Vec<Vec<u32>>,
+    grid: Grid,
 }
 
 impl Server {
-    /// Control a board.
+    /// Constructor.
     pub fn new(board: Board) -> Server {
         Server {
             board: Mutex::new(board),
@@ -178,7 +177,7 @@ async fn post_message(State(server): State<Arc<Server>>, Json(message): Json<Mes
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("{err}\n")))?;
     server.show(grid).await.map_err(internal)?;
 
-    Ok("Shown\n".into())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Show a full grid of character codes.
@@ -200,11 +199,9 @@ async fn post_board(
             format!("invalid request: {detail}\n"),
         )
     })?;
-    let grid = Grid::from_code_rows(&request.grid)
-        .map_err(|err| (StatusCode::BAD_REQUEST, format!("{err}\n")))?;
-    server.show(grid).await.map_err(internal)?;
+    server.show(request.grid).await.map_err(internal)?;
 
-    Ok("Shown\n".into())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn internal(err: anyhow::Error) -> (StatusCode, String) {

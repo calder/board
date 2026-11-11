@@ -143,9 +143,9 @@ impl Serialize for Grid {
 
 impl<'de> Deserialize<'de> for Grid {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Grid, D::Error> {
-        let codes = <[[u8; COLS]; ROWS]>::deserialize(deserializer)?;
+        let rows = Vec::<Vec<u32>>::deserialize(deserializer)?;
 
-        Grid::from_codes(codes).map_err(serde::de::Error::custom)
+        Grid::from_code_rows(&rows).map_err(serde::de::Error::custom)
     }
 }
 

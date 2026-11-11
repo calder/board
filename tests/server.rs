@@ -57,7 +57,7 @@ async fn shows_grid() {
     rows[5] = vec![63; COLS];
     assert_eq!(
         send(&server, Method::POST, &body(&rows)).await,
-        (StatusCode::OK, "Shown\n".into())
+        (StatusCode::NO_CONTENT, String::new())
     );
     let (status, snapshot) = send(&server, Method::GET, "").await;
     assert_eq!(status, StatusCode::OK);
@@ -67,18 +67,31 @@ async fn shows_grid() {
 }
 
 #[tokio::test]
+async fn message_returns_no_content() {
+    let server = test_server();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/message")
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"text": "HI"}"#))
+        .unwrap();
+    let response = server.clone().router().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(server.snapshot().grid.is_some());
+}
+
+#[tokio::test]
 async fn rejects_bad_shapes() {
     let server = test_server();
     let rows = blank();
-    assert_eq!(
-        rejected(&server, &body(&rows[..5])).await,
-        "expected 6 rows, got 5\n"
-    );
+    let short = rejected(&server, &body(&rows[..5])).await;
+    assert!(short.contains("grid: expected 6 rows, got 5"), "{short}");
     let mut wide = blank();
     wide[4].push(0);
-    assert_eq!(
-        rejected(&server, &body(&wide)).await,
-        "row 4: expected 22 columns, got 23\n"
+    let wide = rejected(&server, &body(&wide)).await;
+    assert!(
+        wide.contains("grid: row 4: expected 22 columns, got 23"),
+        "{wide}"
     );
     assert!(server.snapshot().grid.is_none());
 }
@@ -88,9 +101,10 @@ async fn rejects_unknown_codes() {
     let server = test_server();
     let mut rows = blank();
     rows[1][3] = 99;
-    assert_eq!(
-        rejected(&server, &body(&rows)).await,
-        "row 1, column 3: unknown character code 99\n"
+    let unknown = rejected(&server, &body(&rows)).await;
+    assert!(
+        unknown.starts_with("invalid request: grid: row 1, column 3: unknown character code 99"),
+        "{unknown}"
     );
     assert!(server.snapshot().grid.is_none());
 }
