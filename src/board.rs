@@ -1,4 +1,5 @@
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -8,7 +9,11 @@ use vestaboard::Grid;
 /// Vestaboard.
 pub enum Board {
     /// Test board (terminal).
-    Test { shown: Mutex<Grid> },
+    Test {
+        shown: Mutex<Grid>,
+        writes: AtomicUsize,
+        failing: AtomicBool,
+    },
 
     /// Local Vestaboard.
     ///
@@ -24,9 +29,7 @@ impl Board {
     /// Construct board from environment variables.
     pub fn from_env() -> Result<Board> {
         if std::env::var("VESTABOARD_TEST").is_ok_and(|v| !v.is_empty() && v != "0") {
-            return Ok(Board::Test {
-                shown: Mutex::new(Grid::EMPTY),
-            });
+            return Ok(Board::test(Grid::EMPTY));
         }
 
         let host = std::env::var("VESTABOARD_HOST").unwrap_or_else(|_| "vestaboard.local".into());
@@ -41,6 +44,15 @@ impl Board {
         })
     }
 
+    /// Construct a test board showing `grid`.
+    pub fn test(grid: Grid) -> Board {
+        Board::Test {
+            shown: Mutex::new(grid),
+            writes: AtomicUsize::new(0),
+            failing: AtomicBool::new(false),
+        }
+    }
+
     /// Show text centered on board.
     pub async fn show(&self, text: &str) -> Result<()> {
         self.set_grid(&Grid::from_text(text)?).await
@@ -49,9 +61,17 @@ impl Board {
     /// Set grid.
     pub async fn set_grid(&self, grid: &Grid) -> Result<()> {
         match self {
-            Board::Test { shown } => {
+            Board::Test {
+                shown,
+                writes,
+                failing,
+            } => {
+                if failing.load(Ordering::SeqCst) {
+                    bail!("test failure");
+                }
                 println!("{grid}");
                 *shown.lock().unwrap() = *grid;
+                writes.fetch_add(1, Ordering::SeqCst);
 
                 Ok(())
             }
@@ -78,7 +98,13 @@ impl Board {
     /// Get grid.
     pub async fn get_grid(&self) -> Result<Grid> {
         match self {
-            Board::Test { shown } => Ok(*shown.lock().unwrap()),
+            Board::Test { shown, failing, .. } => {
+                if failing.load(Ordering::SeqCst) {
+                    bail!("test failure");
+                }
+
+                Ok(*shown.lock().unwrap())
+            }
             Board::Local { client, host, key } => {
                 #[derive(Deserialize)]
                 struct Shown {

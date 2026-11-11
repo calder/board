@@ -21,15 +21,21 @@ use vestaboard::{Grid, Message, Snapshot};
 
 use crate::board::Board;
 
-/// How often to reread the board to catch changes made elsewhere.
+/// How often to reread the board while it shows the desired grid.
 const REFRESH: Duration = Duration::from_secs(30);
 
-/// Board with the server's copy of what it shows.
-pub struct Server {
-    /// Board locked for each read or send so a slow read can't overwrite a newer send.
-    board: Mutex<Board>,
+/// Longest wait between rereads after a failure or a rewrite.
+const MAX_BACKOFF: Duration = Duration::from_secs(10 * 60);
 
-    /// Latest snapshot for requests and open pages.
+/// Server with exclusive control of a board.
+pub struct Server {
+    /// Board.
+    board: Board,
+
+    /// Grid the board last confirmed showing locked for each board contact.
+    shown: Mutex<Option<Grid>>,
+
+    /// Desired grid and board health for requests and open pages.
     snapshot: Sender<Snapshot>,
 }
 
@@ -52,7 +58,8 @@ impl Server {
     /// Constructor.
     pub fn new(board: Board) -> Server {
         Server {
-            board: Mutex::new(board),
+            board,
+            shown: Mutex::new(None),
             snapshot: Sender::new(Snapshot::default()),
         }
     }
@@ -67,47 +74,79 @@ impl Server {
             .with_state(self)
     }
 
+    /// Get the board.
+    pub fn board(&self) -> &Board {
+        &self.board
+    }
+
     /// Get the latest snapshot.
     pub fn snapshot(&self) -> Snapshot {
         *self.snapshot.borrow()
     }
 
-    /// Record a board contact and notify open pages if anything changed.
-    fn record(&self, grid: Option<Grid>, live: bool) {
-        self.snapshot.send_if_modified(|snapshot| {
-            let next = Snapshot {
-                grid: grid.or(snapshot.grid),
-                live,
-            };
-            let changed = *snapshot != next;
-            *snapshot = next;
+    /// Make `grid` the desired grid and write it unless the board already shows it.
+    pub async fn show(&self, grid: Grid) -> Result<()> {
+        self.update(|snapshot| snapshot.grid = Some(grid));
+        let mut shown = self.shown.lock().await;
+        // A newer request may have replaced the desired grid while this one waited.
+        let desired = self.snapshot().grid.unwrap_or(grid);
+        if *shown == Some(desired) {
+            return Ok(());
+        }
 
-            changed
-        });
+        self.write(&mut shown, desired).await
     }
 
-    /// Show a grid and record the result.
-    async fn show(&self, grid: Grid) -> Result<()> {
-        let board = self.board.lock().await;
-        match board.set_grid(&grid).await {
-            Ok(()) => {
-                self.record(Some(grid), true);
-
-                Ok(())
-            }
+    /// Reread the board and rewrite or adopt the desired grid returning whether they matched.
+    pub async fn reconcile(&self) -> Result<bool> {
+        let mut shown = self.shown.lock().await;
+        let grid = match self.board.get_grid().await {
+            Ok(grid) => grid,
             Err(err) => {
-                self.record(None, false);
+                *shown = None;
+                self.update(|snapshot| snapshot.live = false);
 
-                Err(err)
+                return Err(err);
             }
+        };
+        *shown = Some(grid);
+        let mut desired = grid;
+        self.update(|snapshot| {
+            desired = *snapshot.grid.get_or_insert(grid);
+            snapshot.live = true;
+        });
+        if desired == grid {
+            return Ok(true);
         }
+        self.write(&mut shown, desired).await?;
+
+        Ok(false)
+    }
+
+    /// Write a grid to the locked board and record the result.
+    async fn write(&self, shown: &mut Option<Grid>, grid: Grid) -> Result<()> {
+        let result = self.board.set_grid(&grid).await;
+        *shown = result.is_ok().then_some(grid);
+        self.update(|snapshot| snapshot.live = result.is_ok());
+
+        result
+    }
+
+    /// Change the snapshot and notify open pages if anything changed.
+    fn update(&self, change: impl FnOnce(&mut Snapshot)) {
+        self.snapshot.send_if_modified(|snapshot| {
+            let before = *snapshot;
+            change(snapshot);
+
+            *snapshot != before
+        });
     }
 }
 
 /// Serve the web page and HTTP API until the process exits.
 pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
     let server = Arc::new(Server::new(board));
-    tokio::spawn(refresh(server.clone()));
+    tokio::spawn(control(server.clone()));
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     eprintln!("Listening on {host}:{port}");
     axum::serve(listener, server.router()).await?;
@@ -115,26 +154,30 @@ pub async fn serve(board: Board, host: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Reread the board now and every `REFRESH`.
-async fn refresh(server: Arc<Server>) {
-    let mut ticks = tokio::time::interval(REFRESH);
+/// Reconcile the board now and every `REFRESH` backing off while it fails or drifts.
+async fn control(server: Arc<Server>) {
+    let mut wait = REFRESH;
     let mut failing = false;
     loop {
-        ticks.tick().await;
-        let board = server.board.lock().await;
-        match board.get_grid().await {
-            Ok(grid) => {
+        match server.reconcile().await {
+            Ok(true) => {
                 failing = false;
-                server.record(Some(grid), true);
+                wait = REFRESH;
+            }
+            Ok(false) => {
+                failing = false;
+                eprintln!("Rewrote the board after it changed");
+                wait = (wait * 2).min(MAX_BACKOFF);
             }
             Err(err) => {
                 if !failing {
-                    eprintln!("Can't read the board: {err:#}");
+                    eprintln!("Can't reconcile the board: {err:#}");
                 }
                 failing = true;
-                server.record(None, false);
+                wait = (wait * 2).min(MAX_BACKOFF);
             }
         }
+        tokio::time::sleep(wait).await;
     }
 }
 

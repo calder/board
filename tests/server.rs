@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::body::{Body, to_bytes};
 use axum::http::header::CONTENT_TYPE;
@@ -10,9 +11,24 @@ use vestaboard::{COLS, Grid, ROWS};
 
 /// Make a server with a dry-run board.
 fn test_server() -> Arc<Server> {
-    Arc::new(Server::new(Board::Test {
-        shown: Mutex::new(Grid::EMPTY),
-    }))
+    Arc::new(Server::new(Board::test(Grid::EMPTY)))
+}
+
+/// Get what a test board shows and how often it was written.
+fn board(server: &Server) -> (Grid, usize) {
+    let Board::Test { shown, writes, .. } = server.board() else {
+        unreachable!("test servers use test boards");
+    };
+
+    (*shown.lock().unwrap(), writes.load(Ordering::SeqCst))
+}
+
+/// Make a test board fail or recover.
+fn fail(server: &Server, failing: bool) {
+    let Board::Test { failing: flag, .. } = server.board() else {
+        unreachable!("test servers use test boards");
+    };
+    flag.store(failing, Ordering::SeqCst);
 }
 
 /// Send a request and return its status and body.
@@ -123,4 +139,55 @@ async fn rejects_bad_json() {
     let negative = rejected(&server, r#"{"grid": [[-1]]}"#).await;
     assert!(negative.starts_with("invalid request: "), "{negative}");
     assert!(server.snapshot().grid.is_none());
+}
+
+#[tokio::test]
+async fn adopts_board_grid() {
+    let grid = Grid::from_text("HELLO").unwrap();
+    let server = Arc::new(Server::new(Board::test(grid)));
+    assert!(server.reconcile().await.unwrap());
+    assert_eq!(server.snapshot().grid, Some(grid));
+    assert!(server.snapshot().live);
+    assert_eq!(board(&server), (grid, 0));
+}
+
+#[tokio::test]
+async fn skips_unchanged_grid() {
+    let server = test_server();
+    let grid = Grid::from_text("HI").unwrap();
+    server.show(grid).await.unwrap();
+    server.show(grid).await.unwrap();
+    assert!(server.reconcile().await.unwrap());
+    assert_eq!(board(&server), (grid, 1));
+}
+
+#[tokio::test]
+async fn rewrites_changed_board() {
+    let server = test_server();
+    let grid = Grid::from_text("HI").unwrap();
+    server.show(grid).await.unwrap();
+    let Board::Test { shown, .. } = server.board() else {
+        unreachable!("test servers use test boards");
+    };
+    *shown.lock().unwrap() = Grid::EMPTY;
+    assert!(!server.reconcile().await.unwrap());
+    assert_eq!(board(&server), (grid, 2));
+    assert!(server.reconcile().await.unwrap());
+    assert_eq!(board(&server), (grid, 2));
+}
+
+#[tokio::test]
+async fn retries_after_failure() {
+    let server = test_server();
+    fail(&server, true);
+    let (status, _) = send(&server, Method::POST, "/message", r#"{"text": "HI"}"#).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let grid = Grid::from_text("HI").unwrap();
+    assert_eq!(server.snapshot().grid, Some(grid));
+    assert!(!server.snapshot().live);
+    assert!(server.reconcile().await.is_err());
+    fail(&server, false);
+    assert!(!server.reconcile().await.unwrap());
+    assert_eq!(board(&server), (grid, 1));
+    assert!(server.snapshot().live);
 }
