@@ -58,7 +58,7 @@ jobs:
   screenshots:
     name: screenshots
     runs-on: ubuntu-latest
-    # The job runs inside the pinned image web/tests/container.sh uses, so screenshots match the
+    # The job runs inside the pinned image web/tests/run.sh uses, so screenshots match the
     # baselines.
     container: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:

@@ -18,8 +18,8 @@ Layout tests run against browsers in Playwright's Docker image so screenshots ma
 
 ```sh
 (cd web/tests && npm ci)
-web/tests/container.sh                     # Check screenshots
-web/tests/container.sh --update-snapshots  # Regenerate screenshots
+web/tests/run.sh                     # Check screenshots
+web/tests/run.sh --update-snapshots  # Regenerate screenshots
 ```
 
 ## 🚀 Deploy

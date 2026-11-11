@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the Playwright tests against browsers in the pinned image CI uses so screenshots match the
-# baselines. Arguments go to `playwright test`, e.g. `web/tests/container.sh --update-snapshots`.
+# baselines. Arguments go to `playwright test`, e.g. `web/tests/run.sh --update-snapshots`.
 # Uses Podman if it's installed, otherwise Docker.
 set -euo pipefail
 
