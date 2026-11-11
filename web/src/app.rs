@@ -5,7 +5,7 @@ use gloo_net::http::Request;
 use leptos::html::Textarea;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use vestaboard::{Background, Color, Grid, Message, Snapshot};
+use vestaboard::{Background, Color, Grid, Message};
 use web_sys::{HtmlElement, UrlSearchParams};
 
 use crate::live;
@@ -42,9 +42,9 @@ pub fn App() -> impl IntoView {
         },
         false,
     );
-    let snapshot = RwSignal::new(Snapshot::default());
+    let board = RwSignal::new(None::<Grid>);
     let connected = RwSignal::new(false);
-    live::follow(snapshot, connected);
+    live::follow(board, connected);
     // The board shows until someone touches the draft and again once it's sent.
     let editing = RwSignal::new(!text.get_untracked().is_empty());
     let picking = RwSignal::new(false);
@@ -62,17 +62,12 @@ pub fn App() -> impl IntoView {
         Ok(grid) => grid,
         Err(_) => previous.copied().unwrap_or(Grid::EMPTY),
     });
-    let showing_board =
-        Signal::derive(move || !editing.get() && snapshot.with(|s| s.grid.is_some()));
-    let shown = Memo::new(move |_| match snapshot.get().grid {
+    let showing_board = Signal::derive(move || !editing.get() && board.with(Option::is_some));
+    let shown = Memo::new(move |_| match board.get() {
         Some(board) if showing_board.get() => board,
         _ => grid.get(),
     });
-    let live = Signal::derive(move || {
-        showing_board
-            .get()
-            .then(|| connected.get() && snapshot.with(|s| s.live))
-    });
+    let live = Signal::derive(move || showing_board.get().then(|| connected.get()));
     let invalid = Signal::derive(move || layout.with(Result::is_err));
     // Only send what the preview shows.
     let can_send = Signal::derive(move || {
@@ -109,7 +104,7 @@ pub fn App() -> impl IntoView {
             match send(&message).await {
                 Ok(()) => {
                     // Show the sent board right away instead of waiting for the server's update.
-                    snapshot.update(|s| s.grid = Some(sent));
+                    board.set(Some(sent));
                     editing.set(false);
                     status.set(Status::Sent);
                 }

@@ -1,4 +1,4 @@
-use vestaboard::{Background, COLS, Char, Color, Grid, ROWS, Snapshot, wrap};
+use vestaboard::{Background, COLS, Char, Color, Grid, ROWS, wrap};
 
 fn chars(text: &str) -> Vec<Char> {
     text.chars().map(|c| Char::try_from(c).unwrap()).collect()
@@ -151,18 +151,12 @@ fn rejects_unknown_codes() {
 }
 
 #[test]
-fn serializes_snapshot_as_codes() {
+fn serializes_grid_as_codes() {
     let mut grid = Grid::from_text("HI").unwrap();
     grid.fill(Background::Blue);
-    let snapshot = Snapshot {
-        grid: Some(grid),
-        live: true,
-    };
-    let json = serde_json::to_string(&snapshot).unwrap();
-    assert!(json.starts_with("{\"grid\":[[67,"));
-    assert_eq!(serde_json::from_str::<Snapshot>(&json).unwrap(), snapshot);
-    let empty = serde_json::to_string(&Snapshot::default()).unwrap();
-    assert_eq!(empty, "{\"grid\":null,\"live\":false}");
+    let json = serde_json::to_string(&grid).unwrap();
+    assert!(json.starts_with("[[67,"));
+    assert_eq!(serde_json::from_str::<Grid>(&json).unwrap(), grid);
 }
 
 #[test]

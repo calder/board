@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use board::{Board, serve};
+use board::{Board, LocalBoard, TerminalBoard, serve};
 use vestaboard::Message;
 
 /// Vestaboard control.
@@ -41,10 +41,19 @@ async fn main() -> Result<()> {
     yansi::whenever(yansi::Condition::TTY_AND_COLOR);
     dotenvy::dotenv()?;
     let app = App::parse();
-    let board = Board::from_env()?;
+    let board = board()?;
 
     match app.command {
         Command::Show(message) => board.set_grid(&message.to_grid()?).await,
         Command::Serve { host, port, state } => serve(board, state, &host, port).await,
     }
+}
+
+/// Construct a board from environment variables.
+fn board() -> Result<Box<dyn Board>> {
+    if std::env::var("VESTABOARD_TEST").is_ok_and(|v| !v.is_empty() && v != "0") {
+        return Ok(Box::new(TerminalBoard));
+    }
+
+    Ok(Box::new(LocalBoard::from_env()?))
 }

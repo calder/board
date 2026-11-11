@@ -1,14 +1,28 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
+use anyhow::{Result, bail};
+use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Method, Request, StatusCode};
-use board::{AppState, Board, Server};
+use board::{Server, State};
+use mockall::mock;
 use serde_json::{Value, json};
+use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 use tower::ServiceExt;
 use vestaboard::{COLS, Grid, ROWS};
+
+mock! {
+    Board {}
+
+    #[async_trait]
+    impl board::Board for Board {
+        async fn set_grid(&self, grid: &Grid) -> Result<()>;
+    }
+}
 
 /// Make a fresh state file path.
 fn state_path() -> PathBuf {
@@ -18,26 +32,31 @@ fn state_path() -> PathBuf {
     std::env::temp_dir().join(format!("board-test-{}-{n}/state.json", std::process::id()))
 }
 
-/// Make a server with a dry-run board and fresh state.
-fn test_server() -> Arc<Server> {
-    Arc::new(Server::new(Board::test(Grid::EMPTY), state_path()).unwrap())
+/// Start a server whose mock board fails its first `failures` writes and reports the rest.
+fn start(path: PathBuf, failures: usize) -> (Arc<Server>, UnboundedReceiver<Grid>) {
+    let (sender, writes) = unbounded_channel();
+    let calls = AtomicUsize::new(0);
+    let mut board = MockBoard::new();
+    board.expect_set_grid().returning(move |grid| {
+        if calls.fetch_add(1, Ordering::SeqCst) < failures {
+            bail!("test failure");
+        }
+        sender.send(*grid).unwrap();
+
+        Ok(())
+    });
+
+    (Server::start(Box::new(board), path).unwrap(), writes)
 }
 
-/// Get what a test board shows and how often it was written.
-fn board(server: &Server) -> (Grid, usize) {
-    let Board::Test { shown, writes, .. } = server.board() else {
-        unreachable!("test servers use test boards");
-    };
-
-    (*shown.lock().unwrap(), writes.load(Ordering::SeqCst))
+/// Start a server with fresh state and a working mock board.
+fn test_server() -> (Arc<Server>, UnboundedReceiver<Grid>) {
+    start(state_path(), 0)
 }
 
-/// Make a test board fail or recover.
-fn fail(server: &Server, fail: bool) {
-    let Board::Test { fail: flag, .. } = server.board() else {
-        unreachable!("test servers use test boards");
-    };
-    flag.store(fail, Ordering::SeqCst);
+/// Let the server finish any writes and retries.
+async fn settle() {
+    tokio::time::sleep(Duration::from_secs(60 * 60)).await;
 }
 
 /// Send a request and return its status and body.
@@ -73,9 +92,9 @@ fn blank() -> Vec<Vec<u32>> {
     vec![vec![0; COLS]; ROWS]
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn shows_grid() {
-    let server = test_server();
+    let (server, mut writes) = test_server();
     let mut rows = blank();
     rows[0][0] = 8;
     rows[0][1] = 9;
@@ -84,30 +103,26 @@ async fn shows_grid() {
         send(&server, Method::POST, "/grid", &body(&rows)).await,
         (StatusCode::NO_CONTENT, String::new())
     );
-    let (status, snapshot) = send(&server, Method::GET, "/grid", "").await;
+    let (status, grid) = send(&server, Method::GET, "/grid", "").await;
     assert_eq!(status, StatusCode::OK);
-    let snapshot: Value = serde_json::from_str(&snapshot).unwrap();
-    assert_eq!(snapshot["grid"], json!(rows));
-    assert_eq!(snapshot["live"], true);
+    assert_eq!(serde_json::from_str::<Value>(&grid).unwrap(), json!(rows));
+    let written = writes.recv().await.unwrap();
+    assert_eq!(serde_json::to_value(written).unwrap(), json!(rows));
 }
 
-#[tokio::test]
-async fn message_returns_no_content() {
-    let server = test_server();
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/message")
-        .header(CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"text": "HI"}"#))
-        .unwrap();
-    let response = server.clone().router().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(server.snapshot().grid.is_some());
+#[tokio::test(start_paused = true)]
+async fn shows_message() {
+    let (server, mut writes) = test_server();
+    let (status, _) = send(&server, Method::POST, "/message", r#"{"text": "HI"}"#).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let grid = Grid::from_text("HI").unwrap();
+    assert_eq!(server.state().grid, Some(grid));
+    assert_eq!(writes.recv().await, Some(grid));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rejects_bad_shapes() {
-    let server = test_server();
+    let (server, mut writes) = test_server();
     let rows = blank();
     let short = rejected(&server, &body(&rows[..5])).await;
     assert!(short.contains("grid: expected 6 rows, got 5"), "{short}");
@@ -118,12 +133,14 @@ async fn rejects_bad_shapes() {
         wide.contains("grid: row 4: expected 22 columns, got 23"),
         "{wide}"
     );
-    assert!(server.snapshot().grid.is_none());
+    assert!(server.state().grid.is_none());
+    settle().await;
+    assert!(writes.try_recv().is_err());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rejects_unknown_codes() {
-    let server = test_server();
+    let (server, _) = test_server();
     let mut rows = blank();
     rows[1][3] = 99;
     let unknown = rejected(&server, &body(&rows)).await;
@@ -131,12 +148,12 @@ async fn rejects_unknown_codes() {
         unknown.starts_with("invalid request: grid: row 1, column 3: unknown character code 99"),
         "{unknown}"
     );
-    assert!(server.snapshot().grid.is_none());
+    assert!(server.state().grid.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rejects_bad_json() {
-    let server = test_server();
+    let (server, _) = test_server();
     let extra = json!({ "grid": blank(), "live": true }).to_string();
     let extra = rejected(&server, &extra).await;
     assert!(
@@ -147,51 +164,53 @@ async fn rejects_bad_json() {
     assert!(missing.contains("missing field `grid`"), "{missing}");
     let negative = rejected(&server, r#"{"grid": [[-1]]}"#).await;
     assert!(negative.starts_with("invalid request: "), "{negative}");
-    assert!(server.snapshot().grid.is_none());
+    assert!(server.state().grid.is_none());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn restores_state() {
     let path = state_path();
     let mut rows = blank();
     rows[2][8] = 8;
     let grid: Grid = serde_json::from_value(json!(rows)).unwrap();
-    let server = Arc::new(Server::new(Board::test(Grid::EMPTY), path.clone()).unwrap());
-    server.show(grid).await.unwrap();
-    assert_eq!(
-        AppState::load(&path).unwrap(),
-        AppState { grid: Some(grid) }
-    );
-    let server = Arc::new(Server::new(Board::test(Grid::EMPTY), path).unwrap());
-    assert_eq!(server.snapshot().grid, Some(grid));
-    assert!(!server.snapshot().live);
-    server.sync().await.unwrap();
-    assert_eq!(board(&server), (grid, 1));
-    assert!(server.snapshot().live);
+    let (server, mut writes) = start(path.clone(), 0);
+    server.show(grid).unwrap();
+    assert_eq!(writes.recv().await, Some(grid));
+    assert_eq!(State::load(&path).unwrap(), State { grid: Some(grid) });
+    let (server, mut writes) = start(path, 0);
+    assert_eq!(server.state().grid, Some(grid));
+    assert_eq!(writes.recv().await, Some(grid));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn skips_unchanged_grid() {
-    let server = test_server();
+    let (server, mut writes) = test_server();
     let grid = Grid::from_text("HI").unwrap();
-    server.show(grid).await.unwrap();
-    server.show(grid).await.unwrap();
-    server.sync().await.unwrap();
-    assert_eq!(board(&server), (grid, 1));
+    server.show(grid).unwrap();
+    assert_eq!(writes.recv().await, Some(grid));
+    server.show(grid).unwrap();
+    settle().await;
+    assert!(writes.try_recv().is_err());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn retries_after_failure() {
-    let server = test_server();
-    fail(&server, true);
-    let (status, _) = send(&server, Method::POST, "/message", r#"{"text": "HI"}"#).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let (server, mut writes) = start(state_path(), 3);
     let grid = Grid::from_text("HI").unwrap();
-    assert_eq!(server.snapshot().grid, Some(grid));
-    assert!(!server.snapshot().live);
-    assert!(server.sync().await.is_err());
-    fail(&server, false);
-    server.sync().await.unwrap();
-    assert_eq!(board(&server), (grid, 1));
-    assert!(server.snapshot().live);
+    server.show(grid).unwrap();
+    assert_eq!(writes.recv().await, Some(grid));
+    settle().await;
+    assert!(writes.try_recv().is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn writes_newer_grid_after_failure() {
+    let (server, mut writes) = start(state_path(), 1);
+    server.show(Grid::from_text("HI").unwrap()).unwrap();
+    tokio::task::yield_now().await;
+    let grid = Grid::from_text("BYE").unwrap();
+    server.show(grid).unwrap();
+    assert_eq!(writes.recv().await, Some(grid));
+    settle().await;
+    assert!(writes.try_recv().is_err());
 }

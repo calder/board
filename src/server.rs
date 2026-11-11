@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use anyhow::Result;
 use axum::Router;
+use axum::extract::Json;
+use axum::extract::State as AxumState;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Json, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -14,34 +15,30 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use rust_embed::Embed;
 use serde::Deserialize;
-use tokio::sync::Mutex;
 use tokio::sync::watch::Sender;
 use tokio_stream::wrappers::WatchStream;
 use tokio_stream::{Stream, StreamExt};
-use vestaboard::{Grid, Message, Snapshot};
+use vestaboard::{Grid, Message};
 
-use crate::app_state::AppState;
 use crate::board::Board;
+use crate::state::State;
 
-/// How often to check for a failed write to retry.
-const RETRY: Duration = Duration::from_secs(30);
+/// First wait before retrying a failed write.
+const FIRST_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Longest wait between retries.
 const MAX_BACKOFF: Duration = Duration::from_secs(10 * 60);
 
 /// Server with exclusive control of a board.
 pub struct Server {
-    /// Board.
-    board: Board,
+    /// Board kept in sync with the state.
+    board: Box<dyn Board>,
 
-    /// File the desired state persists to.
+    /// File the state persists to.
     path: PathBuf,
 
-    /// Grid last written to the board locked for each write.
-    written: Mutex<Option<Grid>>,
-
-    /// Desired grid and board health for requests and open pages.
-    snapshot: Sender<Snapshot>,
+    /// App state for requests and open pages.
+    state: Sender<State>,
 }
 
 type Reply = Result<StatusCode, (StatusCode, String)>;
@@ -60,19 +57,16 @@ struct GridRequest {
 }
 
 impl Server {
-    /// Construct a server restoring the desired state from `path`.
-    pub fn new(board: Board, path: PathBuf) -> Result<Server> {
-        let state = AppState::load(&path)?;
-
-        Ok(Server {
+    /// Start a server restoring its state from `path` and keeping `board` in sync with it.
+    pub fn start(board: Box<dyn Board>, path: PathBuf) -> Result<Arc<Server>> {
+        let server = Arc::new(Server {
             board,
+            state: Sender::new(State::load(&path)?),
             path,
-            written: Mutex::new(None),
-            snapshot: Sender::new(Snapshot {
-                grid: state.grid,
-                live: false,
-            }),
-        })
+        });
+        tokio::spawn(update(server.clone()));
+
+        Ok(server)
     }
 
     /// Route the web page and HTTP API.
@@ -85,66 +79,32 @@ impl Server {
             .with_state(self)
     }
 
-    /// Get the board.
-    pub fn board(&self) -> &Board {
-        &self.board
+    /// Get the state.
+    pub fn state(&self) -> State {
+        *self.state.borrow()
     }
 
-    /// Get the latest snapshot.
-    pub fn snapshot(&self) -> Snapshot {
-        *self.snapshot.borrow()
-    }
+    /// Make `grid` the desired grid and save it.
+    pub fn show(&self, grid: Grid) -> Result<()> {
+        let mut result = Ok(());
+        // Save while holding the state so concurrent requests save in order.
+        self.state.send_if_modified(|state| {
+            if state.grid == Some(grid) {
+                return false;
+            }
+            state.grid = Some(grid);
+            result = state.save(&self.path);
 
-    /// Make `grid` the desired grid then save and write it.
-    pub async fn show(&self, grid: Grid) -> Result<()> {
-        self.update(|snapshot| snapshot.grid = Some(grid));
-        let mut written = self.written.lock().await;
-        // A newer request may have replaced the desired grid while this one waited.
-        AppState {
-            grid: self.snapshot().grid,
-        }
-        .save(&self.path)?;
-
-        self.write(&mut written).await
-    }
-
-    /// Write the desired grid unless it was already written.
-    pub async fn sync(&self) -> Result<()> {
-        let mut written = self.written.lock().await;
-
-        self.write(&mut written).await
-    }
-
-    /// Write the desired grid to the locked board unless it was already written.
-    async fn write(&self, written: &mut Option<Grid>) -> Result<()> {
-        let Some(grid) = self.snapshot().grid else {
-            return Ok(());
-        };
-        if *written == Some(grid) {
-            return Ok(());
-        }
-        let result = self.board.set_grid(&grid).await;
-        *written = result.is_ok().then_some(grid);
-        self.update(|snapshot| snapshot.live = result.is_ok());
+            true
+        });
 
         result
-    }
-
-    /// Change the snapshot and notify open pages if anything changed.
-    fn update(&self, change: impl FnOnce(&mut Snapshot)) {
-        self.snapshot.send_if_modified(|snapshot| {
-            let before = *snapshot;
-            change(snapshot);
-
-            *snapshot != before
-        });
     }
 }
 
 /// Serve the web page and HTTP API until the process exits.
-pub async fn serve(board: Board, state: PathBuf, host: &str, port: u16) -> Result<()> {
-    let server = Arc::new(Server::new(board, state)?);
-    tokio::spawn(control(server.clone()));
+pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16) -> Result<()> {
+    let server = Server::start(board, state)?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     eprintln!("Listening on {host}:{port}");
     axum::serve(listener, server.router()).await?;
@@ -152,25 +112,27 @@ pub async fn serve(board: Board, state: PathBuf, host: &str, port: u16) -> Resul
     Ok(())
 }
 
-/// Write the desired grid now and retry failures backing off up to `MAX_BACKOFF`.
-async fn control(server: Arc<Server>) {
-    let mut wait = RETRY;
-    let mut failing = false;
-    loop {
-        match server.sync().await {
-            Ok(()) => {
-                failing = false;
-                wait = RETRY;
-            }
-            Err(err) => {
-                if !failing {
-                    eprintln!("Can't write the board: {err:#}");
+/// Write the desired grid whenever it changes and retry failures backing off up to `MAX_BACKOFF`.
+async fn update(server: Arc<Server>) {
+    let mut state = server.state.subscribe();
+    // Write the restored grid right away.
+    state.mark_changed();
+    while state.changed().await.is_ok() {
+        let Some(grid) = state.borrow_and_update().grid else {
+            continue;
+        };
+        let mut wait = FIRST_BACKOFF;
+        while let Err(err) = server.board.set_grid(&grid).await {
+            eprintln!("Can't write the board: {err:#}");
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => wait = (wait * 2).min(MAX_BACKOFF),
+                // Write the newer grid instead.
+                _ = state.changed() => {
+                    state.mark_changed();
+                    break;
                 }
-                failing = true;
-                wait = (wait * 2).min(MAX_BACKOFF);
             }
         }
-        tokio::time::sleep(wait).await;
     }
 }
 
@@ -192,33 +154,38 @@ async fn page(uri: Uri) -> Response {
     ([(CONTENT_TYPE, file.metadata.mimetype())], file.data).into_response()
 }
 
-async fn get_grid(State(server): State<Arc<Server>>) -> Json<Snapshot> {
-    Json(server.snapshot())
+async fn get_grid(AxumState(server): AxumState<Arc<Server>>) -> Json<Option<Grid>> {
+    Json(server.state().grid)
 }
 
-/// Stream the snapshot now and whenever it changes.
+/// Stream the desired grid now and whenever it changes.
 async fn board_events(
-    State(server): State<Arc<Server>>,
+    AxumState(server): AxumState<Arc<Server>>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let events = WatchStream::new(server.snapshot.subscribe()).map(|snapshot| {
-        Ok(Event::default().data(serde_json::to_string(&snapshot).expect("snapshots serialize")))
-    });
+    let events = WatchStream::new(server.state.subscribe())
+        .filter_map(|state| state.grid)
+        .map(|grid| {
+            Ok(Event::default().data(serde_json::to_string(&grid).expect("grids serialize")))
+        });
 
     Sse::new(events).keep_alive(KeepAlive::default())
 }
 
-async fn post_message(State(server): State<Arc<Server>>, Json(message): Json<Message>) -> Reply {
+async fn post_message(
+    AxumState(server): AxumState<Arc<Server>>,
+    Json(message): Json<Message>,
+) -> Reply {
     let grid = message
         .to_grid()
         .map_err(|err| (StatusCode::BAD_REQUEST, format!("{err}\n")))?;
-    server.show(grid).await.map_err(internal)?;
+    server.show(grid).map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Show a full grid of character codes.
 async fn post_grid(
-    State(server): State<Arc<Server>>,
+    AxumState(server): AxumState<Arc<Server>>,
     request: Result<Json<GridRequest>, JsonRejection>,
 ) -> Reply {
     let Json(request) = request.map_err(|rejection| {
@@ -235,7 +202,7 @@ async fn post_grid(
             format!("invalid request: {detail}\n"),
         )
     })?;
-    server.show(request.grid).await.map_err(internal)?;
+    server.show(request.grid).map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
