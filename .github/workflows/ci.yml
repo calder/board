@@ -98,6 +98,9 @@ jobs:
       # Artifacts don't keep file permissions.
       - run: chmod +x bin/board
 
+      # The server needs a .env file but the tests set everything they use.
+      - run: touch .env
+
       - run: npm ci
         working-directory: web/tests
 
