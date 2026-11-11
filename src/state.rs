@@ -5,7 +5,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+use vestaboard::Background;
 use vestaboard::Grid;
+use vestaboard::Message;
 
 /// How long past the ETA to keep showing a dad countdown.
 const COUNTDOWN_TIMEOUT: Duration = Duration::from_mins(10);
@@ -72,10 +74,29 @@ fn dad_countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
         .strftime("%H:%M")
         .to_string();
 
-    Grid::from_text(&format!(
-        "DAD IN TRANSIT\nETA {clock}\n\nT-{minutes} {unit}"
-    ))
+    Message {
+        text: format!("DAD IN TRANSIT\nETA {clock}\n\nT-{minutes} {unit}"),
+        pad: true,
+        background: Some(background(eta, now)),
+    }
+    .to_grid()
     .ok()
+}
+
+/// Background color for the time remaining until `eta`.
+fn background(eta: Timestamp, now: Timestamp) -> Background {
+    if now >= eta {
+        return Background::Green;
+    }
+    let secs = eta.duration_since(now).as_secs().max(0) as u64;
+
+    if secs > 60 * 60 {
+        Background::Red
+    } else if secs > 5 * 60 {
+        Background::Yellow
+    } else {
+        Background::Green
+    }
 }
 
 /// Minutes to show at `now` or `None` if the dad countdown has finished.
