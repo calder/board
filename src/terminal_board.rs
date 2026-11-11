@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use vestaboard::Grid;
@@ -5,12 +7,19 @@ use vestaboard::Grid;
 use crate::board::Board;
 
 /// Dry-run board that prints to the terminal.
-pub struct TerminalBoard;
+#[derive(Default)]
+pub struct TerminalBoard {
+    shown: Mutex<Option<Grid>>,
+}
 
 #[async_trait]
 impl Board for TerminalBoard {
     async fn set_grid(&self, grid: &Grid) -> Result<()> {
-        println!("{grid}");
+        let mut shown = self.shown.lock().expect("lock isn't poisoned");
+        if *shown != Some(*grid) {
+            println!("{grid}");
+            *shown = Some(*grid);
+        }
 
         Ok(())
     }

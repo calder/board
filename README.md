@@ -7,9 +7,8 @@ Vestaboard controller.
 Configure `.env`:
 
 ```sh
-VESTABOARD_HOST=...     # Vestaboard local hostname
+VESTABOARD_HOST=...     # Vestaboard local hostname (unset for dry-run mode)
 VESTABOARD_KEY=...      # Vestaboard local API key
-VESTABOARD_TEST=...     # 1 to enable dry-run mode
 ```
 
 ## 🚀 Deploy

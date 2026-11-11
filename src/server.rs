@@ -111,24 +111,11 @@ pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16)
 
 /// Keep the board showing the desired grid.
 async fn update(server: Arc<Server>) {
-    let mut written = None;
-    let mut failed = false;
     loop {
         if let Some(grid) = server.state().grid
-            && written != Some(grid)
+            && let Err(err) = server.board.set_grid(&grid).await
         {
-            match server.board.set_grid(&grid).await {
-                Ok(()) => {
-                    written = Some(grid);
-                    failed = false;
-                }
-                Err(err) => {
-                    if !failed {
-                        eprintln!("Can't write the board: {err:#}");
-                        failed = true;
-                    }
-                }
-            }
+            eprintln!("Can't write the board: {err:#}");
         }
         tokio::time::sleep(PERIOD).await;
     }

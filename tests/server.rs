@@ -183,13 +183,12 @@ async fn restores_state() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn skips_unchanged_grid() {
+async fn keeps_writing_grid() {
     let (server, mut writes) = test_server();
     let grid = Grid::from_text("HI").unwrap();
     server.show(grid).unwrap();
     assert_eq!(writes.recv().await, Some(grid));
-    settle().await;
-    assert!(writes.try_recv().is_err());
+    assert_eq!(writes.recv().await, Some(grid));
 }
 
 #[tokio::test(start_paused = true)]
@@ -198,8 +197,6 @@ async fn retries_after_failure() {
     let grid = Grid::from_text("HI").unwrap();
     server.show(grid).unwrap();
     assert_eq!(writes.recv().await, Some(grid));
-    settle().await;
-    assert!(writes.try_recv().is_err());
 }
 
 #[tokio::test(start_paused = true)]

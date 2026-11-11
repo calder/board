@@ -1,7 +1,8 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
+use tokio::sync::Mutex;
 use vestaboard::Grid;
 
 use crate::board::Board;
@@ -13,20 +14,19 @@ pub struct LocalBoard {
     client: reqwest::Client,
     host: String,
     key: String,
+    shown: Mutex<Option<Grid>>,
 }
 
 impl LocalBoard {
-    /// Construct board from environment variables.
-    pub fn from_env() -> Result<LocalBoard> {
-        let host = std::env::var("VESTABOARD_HOST").unwrap_or_else(|_| "vestaboard.local".into());
-        let key = std::env::var("VESTABOARD_KEY").context("Missing VESTABOARD_KEY")?;
-
+    /// Construct a board at `host` using local API `key`.
+    pub fn new(host: String, key: String) -> Result<LocalBoard> {
         Ok(LocalBoard {
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()?,
             host,
             key,
+            shown: Mutex::new(None),
         })
     }
 }
@@ -34,6 +34,10 @@ impl LocalBoard {
 #[async_trait]
 impl Board for LocalBoard {
     async fn set_grid(&self, grid: &Grid) -> Result<()> {
+        let mut shown = self.shown.lock().await;
+        if *shown == Some(*grid) {
+            return Ok(());
+        }
         let res = self
             .client
             .post(format!("http://{}:7000/local-api/message", self.host))
@@ -48,6 +52,7 @@ impl Board for LocalBoard {
                 res.text().await?
             );
         }
+        *shown = Some(*grid);
 
         Ok(())
     }

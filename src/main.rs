@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use board::{Board, LocalBoard, TerminalBoard, serve};
@@ -51,9 +51,11 @@ async fn main() -> Result<()> {
 
 /// Construct a board from environment variables.
 fn board() -> Result<Box<dyn Board>> {
-    if std::env::var("VESTABOARD_TEST").is_ok_and(|v| !v.is_empty() && v != "0") {
-        return Ok(Box::new(TerminalBoard));
+    let host = std::env::var("VESTABOARD_HOST").unwrap_or_default();
+    if host.is_empty() {
+        return Ok(Box::new(TerminalBoard::default()));
     }
+    let key = std::env::var("VESTABOARD_KEY").context("Missing VESTABOARD_KEY")?;
 
-    Ok(Box::new(LocalBoard::from_env()?))
+    Ok(Box::new(LocalBoard::new(host, key)?))
 }
