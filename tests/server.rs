@@ -59,7 +59,7 @@ async fn shows_grid() {
         send(&server, Method::POST, "/grid", &body(&rows)).await,
         (StatusCode::NO_CONTENT, String::new())
     );
-    let (status, snapshot) = send(&server, Method::GET, "/board", "").await;
+    let (status, snapshot) = send(&server, Method::GET, "/grid", "").await;
     assert_eq!(status, StatusCode::OK);
     let snapshot: Value = serde_json::from_str(&snapshot).unwrap();
     assert_eq!(snapshot["grid"], json!(rows));
