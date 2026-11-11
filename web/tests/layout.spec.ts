@@ -62,7 +62,7 @@ test("board", async ({ page }) => {
   );
   grid[2].splice(8, 5, 8, 5, 12, 12, 15);
   // The stream ends after one snapshot and waits long to retry, so the page settles offline.
-  await page.route("/board/events", (route) =>
+  await page.route("/events", (route) =>
     route.fulfill({
       contentType: "text/event-stream",
       body: `retry: 600000\ndata: ${JSON.stringify({ grid, live: true })}\n\n`,
