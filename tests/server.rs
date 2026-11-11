@@ -15,11 +15,11 @@ fn test_server() -> Arc<Server> {
     }))
 }
 
-/// Send a request to `/board` and return its status and body.
-async fn send(server: &Arc<Server>, method: Method, body: &str) -> (StatusCode, String) {
+/// Send a request and return its status and body.
+async fn send(server: &Arc<Server>, method: Method, uri: &str, body: &str) -> (StatusCode, String) {
     let request = Request::builder()
         .method(method)
-        .uri("/board")
+        .uri(uri)
         .header(CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
@@ -32,7 +32,7 @@ async fn send(server: &Arc<Server>, method: Method, body: &str) -> (StatusCode, 
 
 /// Post a body and expect a 400 with its message.
 async fn rejected(server: &Arc<Server>, body: &str) -> String {
-    let (status, body) = send(server, Method::POST, body).await;
+    let (status, body) = send(server, Method::POST, "/grid", body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
     body
@@ -56,10 +56,10 @@ async fn shows_grid() {
     rows[0][1] = 9;
     rows[5] = vec![63; COLS];
     assert_eq!(
-        send(&server, Method::POST, &body(&rows)).await,
+        send(&server, Method::POST, "/grid", &body(&rows)).await,
         (StatusCode::NO_CONTENT, String::new())
     );
-    let (status, snapshot) = send(&server, Method::GET, "").await;
+    let (status, snapshot) = send(&server, Method::GET, "/board", "").await;
     assert_eq!(status, StatusCode::OK);
     let snapshot: Value = serde_json::from_str(&snapshot).unwrap();
     assert_eq!(snapshot["grid"], json!(rows));

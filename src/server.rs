@@ -60,8 +60,9 @@ impl Server {
     /// Route the web page and HTTP API.
     pub fn router(self: Arc<Self>) -> Router {
         Router::new()
-            .route("/board", get(get_board).post(post_board))
+            .route("/board", get(get_board))
             .route("/board/events", get(board_events))
+            .route("/grid", post(post_grid))
             .route("/message", post(post_message))
             .fallback(page)
             .with_state(self)
@@ -181,7 +182,7 @@ async fn post_message(State(server): State<Arc<Server>>, Json(message): Json<Mes
 }
 
 /// Show a full grid of character codes.
-async fn post_board(
+async fn post_grid(
     State(server): State<Arc<Server>>,
     request: Result<Json<GridRequest>, JsonRejection>,
 ) -> Reply {
