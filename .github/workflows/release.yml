@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin glibc 2.31 so the binary runs on Raspberry Pi OS Bullseye and later.
+  ZIG_TARGET: aarch64-unknown-linux-gnu.2.31
+  ASSET: board-aarch64-unknown-linux-gnu
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: shellcheck
+
+      - run: shellcheck deploy/deploy.sh
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # build.rs runs `trunk build`, which needs the wasm target.
+          # cargo-zigbuild then cross-compiles the server for the Pi.
+          targets: wasm32-unknown-unknown, aarch64-unknown-linux-gnu
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk, cargo-zigbuild
+
+      - uses: mlugg/setup-zig@v2
+
+      - run: cargo zigbuild --release --target "$ZIG_TARGET"
+
+      - name: Package binary and checksum
+        run: |
+          mkdir -p dist
+          cp "target/aarch64-unknown-linux-gnu/release/board" "dist/$ASSET"
+          chmod 755 "dist/$ASSET"
+          cp deploy/board.service dist/board.service
+          (cd dist && sha256sum "$ASSET" > "$ASSET.sha256")
+          cat "dist/$ASSET.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: |
+            dist/${{ env.ASSET }}
+            dist/${{ env.ASSET }}.sha256
+            dist/board.service
+
+  release:
+    name: release
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [build, shellcheck]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.ASSET }}
+          path: dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v$(git show -s --format=%cd-%h --date=format-utc:%Y%m%d)"
+          echo "tag=$tag"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; skipping"
+            exit 0
+          fi
+          gh release create "$tag" \
+            --title "$tag" \
+            --generate-notes \
+            --latest \
+            --target "${{ github.sha }}" \
+            "dist/$ASSET" \
+            "dist/$ASSET.sha256" \
+            dist/board.service
