@@ -23,8 +23,11 @@ web/tests/run.sh --update-snapshots  # Regenerate screenshots
 
 ## 🚀 Deploy
 
-Build and install on Raspberri Pi:
+Build and install on the Raspberry Pi over SSH (`BOARD_HOST`, default `pi`):
 
 ```sh
-deploy/deploy.sh
+deploy/deploy.sh              # build, copy, restart
+deploy/deploy.sh --rollback   # previous binary and state
 ```
+
+A failed health check rolls back automatically.
