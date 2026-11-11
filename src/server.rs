@@ -103,7 +103,7 @@ impl Server {
 pub async fn serve(board: Box<dyn Board>, state: PathBuf, host: &str, port: u16) -> Result<()> {
     let server = Server::start(board, state)?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
-    eprintln!("Listening on {host}:{port}");
+    log::info!("Listening on {host}:{port}");
     axum::serve(listener, server.router()).await?;
 
     Ok(())
@@ -115,7 +115,7 @@ async fn update(server: Arc<Server>) {
         if let Some(grid) = server.state().grid
             && let Err(err) = server.board.set_grid(&grid).await
         {
-            eprintln!("Error writing to board: {err:#}");
+            log::error!("Error writing to board: {err:#}");
         }
         tokio::time::sleep(PERIOD).await;
     }
@@ -193,7 +193,7 @@ async fn post_grid(
 }
 
 fn internal(err: anyhow::Error) -> (StatusCode, String) {
-    eprintln!("{err:#}");
+    log::error!("{err:#}");
 
     (StatusCode::INTERNAL_SERVER_ERROR, format!("{err:#}\n"))
 }

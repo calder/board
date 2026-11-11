@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -40,6 +41,14 @@ enum Command {
 async fn main() -> Result<()> {
     yansi::whenever(yansi::Condition::TTY_AND_COLOR);
     dotenvy::dotenv()?;
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(|buf, record| {
+            let ts = jiff::Zoned::now().strftime("%H:%M:%S%.3f");
+            let level = record.level();
+            let style = buf.default_level_style(level);
+            writeln!(buf, "{ts} {style}{level:<5}{style:#} {}", record.args())
+        })
+        .init();
     let app = App::parse();
     let board = board()?;
 
@@ -53,7 +62,7 @@ async fn main() -> Result<()> {
 fn board() -> Result<Box<dyn Board>> {
     let host = std::env::var("VESTABOARD_HOST").unwrap_or_default();
     if host.is_empty() {
-        eprintln!("VESTABOARD_HOST is unset; running in dry-run mode");
+        log::info!("VESTABOARD_HOST is unset; running in dry-run mode");
 
         return Ok(Box::new(TerminalBoard::default()));
     }

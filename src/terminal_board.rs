@@ -17,7 +17,7 @@ impl Board for TerminalBoard {
     async fn set_grid(&self, grid: &Grid) -> Result<()> {
         let mut shown = self.shown.lock().expect("lock isn't poisoned");
         if *shown != Some(*grid) {
-            eprintln!("{grid}");
+            log::info!("{grid}");
             *shown = Some(*grid);
         }
 
