@@ -164,3 +164,33 @@ fn serializes_snapshot_as_codes() {
     let empty = serde_json::to_string(&Snapshot::default()).unwrap();
     assert_eq!(empty, "{\"grid\":null,\"live\":false}");
 }
+
+#[test]
+fn reads_code_rows() {
+    let mut rows = vec![vec![0; COLS]; ROWS];
+    rows[1][2] = 1;
+    rows[5][21] = 63;
+    let grid = Grid::from_code_rows(&rows).unwrap();
+    assert_eq!(grid[1][2], Char::try_from('A').unwrap());
+    assert_eq!(grid[5][21], Char::from(Color::Red));
+    assert_eq!(grid[0][0], Char::BLANK);
+}
+
+#[test]
+fn names_bad_code_rows() {
+    let error = |rows: &[Vec<u32>]| Grid::from_code_rows(rows).unwrap_err().to_string();
+    let rows = vec![vec![0; COLS]; ROWS];
+    assert_eq!(error(&rows[..5]), "expected 6 rows, got 5");
+    let mut short = rows.clone();
+    short[3].pop();
+    assert_eq!(error(&short), "row 3: expected 22 columns, got 21");
+    let mut unknown = rows.clone();
+    unknown[2][7] = 43;
+    assert_eq!(
+        error(&unknown),
+        "row 2, column 7: unknown character code 43"
+    );
+    let mut huge = rows;
+    huge[0][0] = 300;
+    assert_eq!(error(&huge), "row 0, column 0: unknown character code 300");
+}

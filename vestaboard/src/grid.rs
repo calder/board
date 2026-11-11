@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::ops::Index;
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail, ensure};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::background::Background;
@@ -38,6 +38,33 @@ impl Grid {
         for (row, codes) in codes.iter().enumerate() {
             for (col, &code) in codes.iter().enumerate() {
                 grid.0[row][col] = Char::try_from(code)?;
+            }
+        }
+
+        Ok(grid)
+    }
+
+    /// Grid of codes from a request, naming the first bad row or tile counting from 0.
+    pub fn from_code_rows(rows: &[Vec<u32>]) -> Result<Grid> {
+        ensure!(
+            rows.len() == ROWS,
+            "expected {ROWS} rows, got {}",
+            rows.len()
+        );
+        let mut grid = Grid::EMPTY;
+        for (row, codes) in rows.iter().enumerate() {
+            ensure!(
+                codes.len() == COLS,
+                "row {row}: expected {COLS} columns, got {}",
+                codes.len()
+            );
+            for (col, &code) in codes.iter().enumerate() {
+                grid.0[row][col] = u8::try_from(code)
+                    .ok()
+                    .and_then(|code| Char::try_from(code).ok())
+                    .ok_or_else(|| {
+                        anyhow!("row {row}, column {col}: unknown character code {code}")
+                    })?;
             }
         }
 
