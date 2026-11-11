@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use vestaboard::Grid;
 
-/// How long past the ETA to keep showing a countdown.
+/// How long past the ETA to keep showing a dad countdown.
 const COUNTDOWN_TIMEOUT: Duration = Duration::from_mins(10);
 
 /// App state kept across restarts.
@@ -16,15 +16,15 @@ pub struct State {
     /// Grid the board should show.
     pub grid: Grid,
 
-    /// Arrival time of an active countdown.
-    pub countdown: Option<Timestamp>,
+    /// Arrival time of an active dad countdown.
+    pub dad_countdown: Option<Timestamp>,
 }
 
 impl Default for State {
     fn default() -> State {
         State {
             grid: Grid::EMPTY,
-            countdown: None,
+            dad_countdown: None,
         }
     }
 }
@@ -54,16 +54,16 @@ impl State {
         Ok(())
     }
 
-    /// Grid to show at `now` including any countdown.
+    /// Grid to show at `now` including any dad countdown.
     pub fn displayed(&self, now: Timestamp) -> Grid {
-        self.countdown
-            .and_then(|eta| countdown_grid(eta, now))
+        self.dad_countdown
+            .and_then(|eta| dad_countdown_grid(eta, now))
             .unwrap_or(self.grid)
     }
 }
 
-/// Countdown grid at `now` or `None` if the countdown has finished.
-fn countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
+/// Dad countdown grid at `now` or `None` if it has finished.
+fn dad_countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
     let minutes = minutes_shown(eta, now)?;
     let unit = if minutes == 1 { "minute" } else { "minutes" };
     let clock = eta
@@ -78,7 +78,7 @@ fn countdown_grid(eta: Timestamp, now: Timestamp) -> Option<Grid> {
     .ok()
 }
 
-/// Minutes to show at `now` or `None` if the countdown has finished.
+/// Minutes to show at `now` or `None` if the dad countdown has finished.
 fn minutes_shown(eta: Timestamp, now: Timestamp) -> Option<u32> {
     let timeout = eta.checked_add(COUNTDOWN_TIMEOUT).ok()?;
     if now >= timeout {

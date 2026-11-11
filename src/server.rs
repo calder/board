@@ -54,10 +54,10 @@ struct GridRequest {
     grid: Grid,
 }
 
-/// Countdown to an arrival.
+/// Dad countdown to an arrival.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CountdownRequest {
+struct DadCountdownRequest {
     /// Arrival time.
     eta: Timestamp,
 }
@@ -81,7 +81,10 @@ impl Server {
             .route("/events", get(board_events))
             .route("/grid", get(get_grid).post(post_grid))
             .route("/message", post(post_message))
-            .route("/countdown", post(post_countdown).delete(delete_countdown))
+            .route(
+                "/dad-countdown",
+                post(post_dad_countdown).delete(delete_dad_countdown),
+            )
             .fallback(page)
             .with_state(self)
     }
@@ -91,7 +94,7 @@ impl Server {
         *self.state.borrow()
     }
 
-    /// Grid to show now including any countdown.
+    /// Grid to show now including any dad countdown.
     pub fn displayed(&self) -> Grid {
         self.state().displayed(Timestamp::now())
     }
@@ -101,11 +104,11 @@ impl Server {
         let mut result = Ok(());
         // Save while holding the state so concurrent requests save in order.
         self.state.send_if_modified(|state| {
-            if state.grid == grid && state.countdown.is_none() {
+            if state.grid == grid && state.dad_countdown.is_none() {
                 return false;
             }
             state.grid = grid;
-            state.countdown = None;
+            state.dad_countdown = None;
             result = state.save(&self.path);
 
             true
@@ -114,14 +117,14 @@ impl Server {
         result
     }
 
-    /// Start a countdown to `eta` and save it.
-    pub fn start_countdown(&self, eta: Timestamp) -> Result<()> {
+    /// Start a dad countdown to `eta` and save it.
+    pub fn start_dad_countdown(&self, eta: Timestamp) -> Result<()> {
         let mut result = Ok(());
         self.state.send_if_modified(|state| {
-            if state.countdown == Some(eta) {
+            if state.dad_countdown == Some(eta) {
                 return false;
             }
-            state.countdown = Some(eta);
+            state.dad_countdown = Some(eta);
             result = state.save(&self.path);
 
             true
@@ -130,14 +133,14 @@ impl Server {
         result
     }
 
-    /// Stop any countdown and keep the desired grid.
-    pub fn cancel_countdown(&self) -> Result<()> {
+    /// Stop any dad countdown and keep the desired grid.
+    pub fn cancel_dad_countdown(&self) -> Result<()> {
         let mut result = Ok(());
         self.state.send_if_modified(|state| {
-            if state.countdown.is_none() {
+            if state.dad_countdown.is_none() {
                 return false;
             }
-            state.countdown = None;
+            state.dad_countdown = None;
             result = state.save(&self.path);
 
             true
@@ -150,10 +153,10 @@ impl Server {
         let now = Timestamp::now();
         let mut result = Ok(());
         self.state.send_if_modified(|state| {
-            if state.displayed(now) != state.grid || state.countdown.is_none() {
+            if state.displayed(now) != state.grid || state.dad_countdown.is_none() {
                 return false;
             }
-            state.countdown = None;
+            state.dad_countdown = None;
             result = state.save(&self.path);
 
             true
@@ -256,30 +259,30 @@ async fn post_grid(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Count down to an arrival then restore the board.
-async fn post_countdown(
+/// Start a dad countdown to an arrival.
+async fn post_dad_countdown(
     AxumState(server): AxumState<Arc<Server>>,
-    Json(request): Json<CountdownRequest>,
+    Json(request): Json<DadCountdownRequest>,
 ) -> Reply {
     let preview = State {
         grid: Grid::EMPTY,
-        countdown: Some(request.eta),
+        dad_countdown: Some(request.eta),
     }
     .displayed(Timestamp::now());
     if preview == Grid::EMPTY {
         return Err((
             StatusCode::BAD_REQUEST,
-            "countdown is already over\n".into(),
+            "dad countdown is already over\n".into(),
         ));
     }
-    server.start_countdown(request.eta).map_err(internal)?;
+    server.start_dad_countdown(request.eta).map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Stop the countdown and restore the grid it replaced.
-async fn delete_countdown(AxumState(server): AxumState<Arc<Server>>) -> Reply {
-    server.cancel_countdown().map_err(internal)?;
+/// Stop the dad countdown and restore the grid it replaced.
+async fn delete_dad_countdown(AxumState(server): AxumState<Arc<Server>>) -> Reply {
+    server.cancel_dad_countdown().map_err(internal)?;
 
     Ok(StatusCode::NO_CONTENT)
 }

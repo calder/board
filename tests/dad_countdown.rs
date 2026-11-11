@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use board::State;
 use jiff::Timestamp;
+use vestaboard::COLS;
+use vestaboard::Char;
 use vestaboard::Grid;
 
 fn at(now: Timestamp, minutes: i64) -> Timestamp {
@@ -26,12 +28,12 @@ fn text(eta_clock: &str, minutes: u32) -> Grid {
 fn state(grid: &str, eta: Option<Timestamp>) -> State {
     State {
         grid: Grid::from_text(grid).unwrap(),
-        countdown: eta,
+        dad_countdown: eta,
     }
 }
 
 #[test]
-fn shows_countdown_then_restores() {
+fn shows_dad_countdown_then_restores() {
     let now = "2026-11-11T19:00:00-08:00".parse::<Timestamp>().unwrap();
     let home = "HOME";
     // 42 minutes out snaps to T-60.
@@ -58,4 +60,19 @@ fn pads_morning_hour() {
     let eta = at(now, 35);
     let state = state("HOME", Some(eta));
     assert_eq!(state.displayed(now), text("07:05", 60));
+}
+
+#[test]
+fn centers_dad_countdown() {
+    let now = "2026-11-11T19:00:00-08:00".parse::<Timestamp>().unwrap();
+    let grid = state("HOME", Some(at(now, 30))).displayed(now);
+    // Four lines centered on six rows start at row 1.
+    assert!(grid[0].iter().all(|tile| *tile == Char::EMPTY));
+    assert!(grid[5].iter().all(|tile| *tile == Char::EMPTY));
+    for (row, line) in [(1, "DAD IN TRANSIT"), (2, "ETA 19:30"), (4, "T-30 minutes")] {
+        let chars = Char::from_text(line).unwrap();
+        let col = (COLS - chars.len()) / 2;
+        assert_eq!(grid[row][col..col + chars.len()], *chars, "{line}");
+    }
+    assert!(grid[3].iter().all(|tile| *tile == Char::EMPTY));
 }
