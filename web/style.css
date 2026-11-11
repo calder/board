@@ -1,3 +1,26 @@
+/* Bundled fonts so every device, and the screenshot tests, render the same glyphs. */
+@font-face {
+  font-family: "Inter";
+  font-weight: 100 900;
+  font-display: block;
+  src: url("/fonts/inter.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Roboto Mono";
+  font-weight: 100 700;
+  font-display: block;
+  src: url("/fonts/roboto-mono.woff2") format("woff2");
+}
+
+/* Only the color squares the board can show. */
+@font-face {
+  font-family: "Noto Color Emoji";
+  font-display: block;
+  src: url("/fonts/noto-color-emoji.woff2") format("woff2");
+  unicode-range: U+1F7E5-1F7EA, U+2B1B-2B1C, U+FE0F;
+}
+
 :root {
   color-scheme: dark;
   --bg: #050506;
@@ -26,7 +49,7 @@ body {
 body {
   overflow: hidden;
   color: var(--text);
-  font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  font: 15px/1.4 "Inter", "Noto Color Emoji", sans-serif;
 }
 
 button {
@@ -90,7 +113,7 @@ button {
   background: rgba(14, 14, 16, 0.88);
   backdrop-filter: blur(8px);
   color: var(--text);
-  font: 600 14px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  font: 600 14px/1.2 "Inter", "Noto Color Emoji", sans-serif;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -118,7 +141,7 @@ button {
     linear-gradient(transparent 49%, rgba(0, 0, 0, 0.6) 49.5%, transparent 51.5%),
     linear-gradient(#232326, #18181a);
   color: #f5f5f5;
-  font: 700 calc(100cqw / 22 * 0.58) / 1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font: 700 calc(100cqw / 22 * 0.58) / 1 "Inter", sans-serif;
   user-select: none;
 }
 
@@ -149,7 +172,7 @@ button {
   background: transparent;
   color: var(--text);
   caret-color: var(--accent);
-  font: 500 clamp(16px, 4.4vw, 20px) / 1.4 ui-monospace, "SF Mono", "Roboto Mono", Menlo, monospace;
+  font: 500 clamp(16px, 4.4vw, 20px) / 1.4 "Roboto Mono", "Noto Color Emoji", monospace;
   text-align: center;
   text-transform: uppercase;
   resize: none;
@@ -398,7 +421,7 @@ button {
   border-radius: 999px;
   background: var(--bg);
   color: var(--accent);
-  font: 700 10px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  font: 700 10px/1.2 "Inter", "Noto Color Emoji", sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   transform: translate(-50%, -50%);

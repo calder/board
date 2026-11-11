@@ -4,11 +4,12 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-const INPUTS: [&str; 10] = [
+const INPUTS: [&str; 11] = [
     "web/src",
     "web/index.html",
     "web/style.css",
     "web/icons",
+    "web/fonts",
     "web/manifest.webmanifest",
     "web/sw.js",
     "web/Cargo.toml",
